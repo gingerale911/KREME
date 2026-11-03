@@ -123,6 +123,16 @@ class LiveState:
     # Events log (last N events)
     events: deque = field(default_factory=lambda: deque(maxlen=100))
 
+    # Lap analysis / session persistence
+    lap_history: deque = field(default_factory=lambda: deque(maxlen=16))
+    _last_recorded_lap: int | None = field(default=None, init=False, repr=False)
+    _current_lap_samples: list[dict[str, float]] = field(
+        default_factory=list,
+        init=False,
+        repr=False,
+    )
+    _current_lap_max_speed: float = field(default=0.0, init=False, repr=False)
+
     # Frame tracking
     last_update_time: float = 0.0
     frame_count: int = 0
@@ -181,7 +191,14 @@ class LiveState:
     def _update_session(self, packet: DecodedPacket) -> None:
         d = packet.data
         s = self.session
-        s.session_uid = packet.header.session_uid
+        previous_uid = s.session_uid
+        new_uid = int(packet.header.session_uid)
+        if previous_uid != 0 and new_uid != previous_uid:
+            self.lap_history.clear()
+            self._current_lap_samples = []
+            self._current_lap_max_speed = 0.0
+            self._last_recorded_lap = None
+        s.session_uid = new_uid
         s.track_id = d["trackId"]
         s.track_name = TRACK_NAMES.get(d["trackId"], f"Track {d['trackId']}")
         s.track_length = d["trackLength"]
@@ -217,13 +234,19 @@ class LiveState:
         if idx < len(cars):
             car = cars[idx]
             p = self.player
+            previous_lap = p.current_lap_num
             p.lap_distance = float(car["lapDistance"])
             p.total_distance = float(car["totalDistance"])
             p.last_lap_time_ms = int(car["lastLapTimeInMS"])
             p.current_lap_time_ms = int(car["currentLapTimeInMS"])
             p.current_lap_num = int(car["currentLapNum"])
-            p.sector1_time_ms = (
-                int(car["sector1TimeMinutesPart"]) * 60_000
+            if previous_lap > 0 and p.current_lap_num <= 1 and p.current_lap_num < previous_lap:
+                self.lap_history.clear()
+                self._current_lap_samples = []
+                self._current_lap_max_speed = 0.0
+                self._last_recorded_lap = None
+
+            p.sector1_time_ms = (                int(car["sector1TimeMinutesPart"]) * 60_000
                 + int(car["sector1TimeMSPart"])
             )
             p.sector2_time_ms = (
@@ -236,6 +259,7 @@ class LiveState:
             p.pit_status = int(car["pitStatus"])
             p.driver_status = int(car["driverStatus"])
             p.penalties = int(car["penalties"])
+            self._record_lap_transition(previous_lap, p.current_lap_num)
 
     def _update_telemetry(self, packet: DecodedPacket) -> None:
         idx = self.player_car_index
@@ -250,6 +274,7 @@ class LiveState:
             p.gear = int(car["gear"])
             p.rpm = int(car["engineRPM"])
             p.drs = int(car["drs"])
+            self._record_lap_sample()
         p.suggested_gear = packet.data.get("suggestedGear", 0)
 
     def _update_status(self, packet: DecodedPacket) -> None:
@@ -275,6 +300,59 @@ class LiveState:
             "frame": packet.header.overall_frame_identifier,
             "details": {k: v for k, v in packet.data.items() if k != "code"},
         })
+
+    def _record_lap_sample(self) -> None:
+        """Collect lap telemetry samples for later lap-by-lap comparison."""
+        if self.player.current_lap_num <= 0:
+            return
+        sample = {
+            "speed": float(self.player.speed),
+            "throttle": float(self.player.throttle),
+            "brake": float(self.player.brake),
+            "distance": float(self.player.lap_distance),
+            "lapDistance": float(self.player.lap_distance),
+        }
+        self._current_lap_samples.append(sample)
+        self._current_lap_max_speed = max(
+            self._current_lap_max_speed,
+            float(self.player.speed),
+        )
+
+    def _record_lap_transition(self, previous_lap: int, current_lap: int) -> None:
+        """Finalize a completed lap before the next lap starts."""
+        if previous_lap <= 0 or current_lap == previous_lap:
+            self._last_recorded_lap = current_lap
+            return
+        if not self._current_lap_samples:
+            self._last_recorded_lap = current_lap
+            return
+        avg_speed = sum(sample["speed"] for sample in self._current_lap_samples)
+        avg_speed /= len(self._current_lap_samples)
+        avg_throttle = sum(sample["throttle"] for sample in self._current_lap_samples)
+        avg_throttle /= len(self._current_lap_samples)
+        avg_brake = sum(sample["brake"] for sample in self._current_lap_samples)
+        avg_brake /= len(self._current_lap_samples)
+        lap_time_ms = max(0, int(self.player.last_lap_time_ms or self.player.current_lap_time_ms))
+        self.lap_history.append({
+            "lap": previous_lap,
+            "lapTimeMs": lap_time_ms,
+            "sector1TimeMs": self.player.sector1_time_ms,
+            "sector2TimeMs": self.player.sector2_time_ms,
+            "sector3TimeMs": max(0, lap_time_ms - self.player.sector1_time_ms - self.player.sector2_time_ms),
+            "avgSpeedKph": round(avg_speed, 1),
+            "maxSpeedKph": round(self._current_lap_max_speed, 1),
+            "avgThrottle": round(avg_throttle, 3),
+            "avgBrake": round(avg_brake, 3),
+            "samples": list(self._current_lap_samples),
+        })
+        self._current_lap_samples = []
+        self._current_lap_max_speed = 0.0
+        self._last_recorded_lap = current_lap
+
+    def lap_history_snapshot(self) -> list[dict[str, Any]]:
+        """Return the completed lap records for this telemetry session."""
+        with self._lock:
+            return [_json_safe(item) for item in list(self.lap_history)]
 
     def snapshot(self) -> dict[str, Any]:
         """Create a compact, JSON-safe snapshot for API and WebSocket frames."""
@@ -357,11 +435,13 @@ class LiveState:
                     "name": player_name,
                     "driverNumber": player_number,
                     "tyres": self._player_tyres(),
+                    "damage": self._player_damage(),
                 },
                 "cars": self._car_positions(),
                 "events": [
                     _json_safe(event) for event in list(self.events)[-10:]
                 ],
+                "laps": [_json_safe(item) for item in list(self.lap_history)],
                 "frameCount": self.frame_count,
                 "frameId": self.overall_frame_id,
                 "playerCarIndex": idx,
@@ -423,6 +503,29 @@ class LiveState:
             "brakeTempC": wheel_values(telemetry, "brakesTemperature"),
             "wearPct": wheel_values(damage, "tyresWear", 1),
             "damagePct": wheel_values(damage, "tyresDamage"),
+        }
+
+    def _player_damage(self) -> dict[str, Any]:
+        """Expose wing and aero damage metrics for the current car."""
+        idx = self.player_car_index
+        packet = self.latest_damage
+        if packet is None or idx >= len(packet.data["cars"]):
+            return {
+                "frontLeftWingDamage": None,
+                "frontRightWingDamage": None,
+                "rearWingDamage": None,
+                "floorDamage": None,
+                "diffuserDamage": None,
+                "sidepodDamage": None,
+            }
+        car = packet.data["cars"][idx]
+        return {
+            "frontLeftWingDamage": _json_number(car["frontLeftWingDamage"], 0),
+            "frontRightWingDamage": _json_number(car["frontRightWingDamage"], 0),
+            "rearWingDamage": _json_number(car["rearWingDamage"], 0),
+            "floorDamage": _json_number(car["floorDamage"], 0),
+            "diffuserDamage": _json_number(car["diffuserDamage"], 0),
+            "sidepodDamage": _json_number(car["sidepodDamage"], 0),
         }
 
     def _player_status_value(self, field_name: str, digits: int) -> float | None:

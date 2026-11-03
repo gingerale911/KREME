@@ -13,7 +13,7 @@ import logging
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -69,6 +69,14 @@ def create_app(
         )
         return _status_page(live_state, protocol)
 
+    @app.get("/track_data/{track_file}")
+    async def track_data(track_file: str):
+        """Serve prerendered Shfonic track geometry files for the live map."""
+        file_path = frontend_dist / "track_data" / track_file
+        if not file_path.is_file():
+            raise HTTPException(status_code=404, detail="Track data not found")
+        return FileResponse(file_path)
+
     @app.get("/api/status")
     async def status():
         """Get current server and connection status."""
@@ -93,6 +101,11 @@ def create_app(
     async def events():
         """Get recent events."""
         return live_state.events_snapshot()
+
+    @app.get("/api/laps")
+    async def lap_history():
+        """Get the lap-by-lap telemetry summary for the current session."""
+        return live_state.lap_history_snapshot()
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):

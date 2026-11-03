@@ -144,6 +144,32 @@ button { font: inherit; }
 .status-item { display: flex; align-items: center; gap: 9px; white-space: nowrap; }
 .status-label { color: var(--subtle); }
 .status-item strong { color: #d7dce4; font-weight: 500; }
+.status-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255,255,255,.02);
+}
+.status-tab {
+  border: 0;
+  appearance: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 7px 12px;
+  border-radius: 4px;
+  font: 600 9px "DM Mono", monospace;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.status-tab.active {
+  background: rgba(112, 169, 255, .12);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(112,169,255,.2);
+}
 .status-event { display: flex; align-items: center; gap: 9px; margin-left: auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .event-pulse { width: 5px; height: 5px; background: var(--amber); box-shadow: 0 0 8px rgba(242, 185, 75, .5); }
 .text-green { color: var(--green) !important; }
@@ -248,6 +274,339 @@ button { font: inherit; }
 }
 .panel-foot span { display: flex; align-items: center; gap: 6px; }
 .legend-live { width: 6px; height: 6px; border-radius: 50%; background: var(--red); }
+
+.lap-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+.lap-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(255,255,255,.02);
+}
+.lap-card-current {
+  border-color: rgba(241, 72, 81, .35);
+  background: rgba(241, 72, 81, .04);
+}
+.lap-card-label {
+  color: var(--muted);
+  font: 500 8px "DM Mono", monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.lap-card strong {
+  font: 600 18px "Barlow Condensed", sans-serif;
+  letter-spacing: .04em;
+}
+.lap-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  font: 600 10px "DM Mono", monospace;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.lap-card-row b {
+  color: var(--text);
+  font-weight: 600;
+}
+.lap-tab-panel {
+  margin-top: 18px;
+}
+.lap-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.35fr);
+  gap: 16px;
+}
+.lap-main-panel,
+.lap-graph-panel {
+  min-height: 350px;
+  padding: 20px 21px 14px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: linear-gradient(140deg, rgba(255,255,255,.014), transparent 48%), var(--panel);
+}
+.lap-selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 18px;
+  color: var(--muted);
+  font: 500 9px "DM Mono", monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.lap-selection-bar select {
+  min-width: 120px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(255,255,255,.02);
+  color: var(--text);
+  padding: 6px 8px;
+  font: 500 10px "DM Mono", monospace;
+}
+.lap-graph-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  color: var(--muted);
+  font: 500 9px "DM Mono", monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.lap-graph {
+  width: 100%;
+  height: 230px;
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(255,255,255,.01);
+}
+.lap-summary-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.lap-summary-row > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(255,255,255,.02);
+  color: var(--muted);
+  font: 500 9px "DM Mono", monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.lap-summary-row strong {
+  color: var(--text);
+}
+.lap-table {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  overflow: hidden;
+  background: rgba(255,255,255,.01);
+}
+.lap-table-head,
+.lap-table-row {
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr 1.1fr 1.2fr;
+  gap: 8px;
+  padding: 7px 10px;
+  font: 500 10px "DM Mono", monospace;
+}
+.lap-table-head {
+  color: var(--muted);
+  background: rgba(255,255,255,.02);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.lap-table-row {
+  border-top: 1px solid var(--line);
+  color: var(--text);
+}
+.lap-table-row-clickable {
+  cursor: pointer;
+}
+.lap-table-row-clickable:hover {
+  background: rgba(255,255,255,.02);
+}
+.lap-table-empty {
+  padding: 14px 10px;
+  color: var(--muted);
+  font: 500 10px "DM Mono", monospace;
+}
+.session-store-note {
+  margin-top: 12px;
+  color: var(--muted);
+  font: 500 9px "DM Mono", monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.series-reference {
+  fill: none;
+  stroke: #8ab4ff;
+  stroke-width: 2;
+  stroke-dasharray: 6 6;
+}
+.series-reference-brake {
+  fill: none;
+  stroke: #f59e0b;
+  stroke-width: 2;
+  stroke-dasharray: 6 6;
+}
+
+.panel-car-health {
+  position: relative;
+  overflow: hidden;
+}
+
+.car-health-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.car-header-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border: 1px solid rgba(96, 246, 163, 0.32);
+  border-radius: 6px;
+  background: rgba(96, 246, 163, 0.06);
+}
+
+.car-number {
+  color: #f4f7f9;
+  font: 800 14px "Barlow Condensed", sans-serif;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.car-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(96, 246, 163, 0.12);
+  color: #9af7cc;
+  font: 600 8px "DM Mono", monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.car-rig-wrapper {
+  position: relative;
+  min-height: 270px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 25% 15%, rgba(96, 246, 163, 0.12), transparent 30%),
+    linear-gradient(180deg, rgba(14, 20, 26, 0.75), rgba(10, 15, 20, 0.97));
+  overflow: hidden;
+}
+
+.race-car-svg {
+  display: block;
+  width: 100%;
+  height: 250px;
+}
+
+.wheel-meter {
+  position: absolute;
+  width: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  z-index: 2;
+  color: var(--muted);
+  font: 500 9px "DM Mono", monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.wheel-meter .ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px rgba(96, 246, 163, 0.2);
+}
+
+.wheel-meter .ring::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  background: rgba(10, 15, 20, 0.72);
+  border: 1px solid rgba(96, 246, 163, 0.2);
+}
+
+.wheel-meter .ring span {
+  position: relative;
+  z-index: 1;
+  color: #dffef3;
+  font: 700 9px "DM Mono", monospace;
+}
+
+.wheel-meter small {
+  color: #99a8b8;
+  letter-spacing: .12em;
+}
+
+.wheel-1 { left: 12%; top: 18%; }
+.wheel-2 { right: 12%; top: 18%; }
+.wheel-3 { left: 12%; bottom: 6%; }
+.wheel-4 { right: 12%; bottom: 6%; }
+
+.car-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.car-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.02);
+  color: var(--muted);
+  font: 500 8px "DM Mono", monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.car-metric strong {
+  color: #eaf4ff;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+
+.wing-damage-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.wing-damage-grid > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid rgba(96, 246, 163, 0.2);
+  border-radius: 4px;
+  background: rgba(96, 246, 163, 0.04);
+  color: var(--muted);
+  font: 500 8px "DM Mono", monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.wing-damage-grid strong {
+  color: #f4f8ff;
+}
 
 .timing-main { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 25px; }
 .timer-block { display: flex; flex-direction: column; gap: 5px; }
