@@ -154,3 +154,38 @@ these in-memory laps. The UI no longer merges old browser-cached lap records.
 Verification: `python -m pytest tests/test_lap_recorder.py tests/test_recorder.py`.
 The tests use synthetic packets; real F1 25 capture/replay validation, including
 actual packet alignment and flashbacks, is still required.
+
+## Paused live telemetry
+
+The dashboard uses the Session packet's explicit `gamePaused` flag. While
+paused it retains the last driving readings, car status, track position and
+rolling telemetry traces. Paused packet repeats do not update the driving
+state or lap recorder. Resuming waits for a new driving sample; no artificial
+flat line is appended during the pause. The first resumed point starts a new
+trace segment. No completed lap is needed to inspect this live window.
+
+Live trace sampling uses the telemetry packet identity and advancing game time,
+not the WebSocket refresh count. Repeated snapshots and unrelated packets
+cannot append duplicate speed/throttle/brake samples.
+
+Silence is not treated as proof of a game pause. PAUSED requires a recent
+Session packet with the flag set; otherwise the UI shows STALE or DISCONNECTED
+and clearly identifies retained readings. Individual packet freshness remains
+unchanged. Fields never received still show an em dash.
+
+The API keeps its existing fresh-only `player`, `session` and `cars` fields.
+`retainedLive` contains the last received values for frozen display; consumers
+must respect `freshness`. `gamePaused`, `telemetrySample` and `liveStreamId`
+provide pause, sample identity and reset metadata. New sessions/player changes
+and recorder timeline resets clear the browser traces. A new backend process
+also gets a new stream identity.
+
+Storage is bounded: one latest snapshot plus the existing 360-point browser
+trace window. This is not a new historical database. Refreshing the browser
+clears the rolling traces; restarting the server clears retained live values.
+Persisted lap comparison continues to use the existing DuckDB storage.
+
+Validation: 156 backend tests passed; production frontend build passed. A
+simulated DOM/WebSocket check covered pause retention, frozen plots, duplicate
+suppression, resume gaps, disconnect retention and session clearing. Actual
+F1 25 pause/resume behaviour still needs checking on the game owner's PC.

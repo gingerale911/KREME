@@ -194,3 +194,19 @@ KREM/
   passed. Windows and live-game checks for this step remain pending.
 - Remaining: DuckDB persistence and trace APIs, distance comparison API,
   synchronized four-chart comparison UI, end-to-end capture/replay validation.
+
+## PR feedback update — 2026-11-05: retain paused live telemetry
+
+- Based on the uploaded KREME (5) snapshot, including persistence, comparison
+  APIs, comparison UI and the all-metrics car panel. Those features preserved.
+- Exposed explicit Session gamePaused flag. Freeze driving updates and recorder
+  input while paused; keep receiving Session updates to detect resume.
+- Added separate retainedLive values without weakening fresh-only API fields
+  or inventing values for never-received data. Added per-stream/sample identity.
+- Frontend retains readings/plots on pause or disconnection with accurate state
+  labels. Only new advancing telemetry samples extend plots; resume starts a
+  new path segment. Session/player/timeline changes reset cached live traces.
+- Added six backend regression tests in tests/test_pause_retention.py.
+- Validation: 156 tests passed, TypeScript/Vite build passed, simulated DOM and
+  WebSocket checks passed for freeze/resume/disconnect/reset. No game installed
+  here; live-game check remains with the repository owner.

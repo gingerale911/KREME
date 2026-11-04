@@ -130,6 +130,10 @@ interface PacketFreshness {
 }
 
 interface TelemetrySnapshot {
+  liveStreamId?: string;
+  gamePaused?: boolean;
+  telemetrySample?: { id: string; sessionTime: number } | null;
+  retainedLive?: { player?: Player; session?: Session; cars?: Car[] };
   recorder?: { epoch?: number; sessionUid?: string | null };
   freshness?: Record<string, PacketFreshness>;
   stats?: Stats;
@@ -142,6 +146,7 @@ interface TelemetrySnapshot {
 }
 
 interface PlotPoint {
+  gapBefore?: boolean;
   at: number;
   distance: number;
   speed: number;
@@ -450,9 +455,9 @@ function MiniChart({ points, mode }: { points: PlotPoint[]; mode: "speed" | "ped
   const innerHeight = height - padding.top - padding.bottom;
   const x = (index: number) => padding.left + (points.length <= 1 ? 0 : (index / (points.length - 1)) * innerWidth);
   const y = (value: number) => padding.top + innerHeight - Math.max(0, Math.min(value, maxY)) / maxY * innerHeight;
-  const speedPath = points.map((point, index) => `${index ? "L" : "M"}${x(index).toFixed(1)} ${y(point.speed).toFixed(1)}`).join(" ");
-  const throttlePath = points.map((point, index) => `${index ? "L" : "M"}${x(index).toFixed(1)} ${y(point.throttle * 100).toFixed(1)}`).join(" ");
-  const brakePath = points.map((point, index) => `${index ? "L" : "M"}${x(index).toFixed(1)} ${y(point.brake * 100).toFixed(1)}`).join(" ");
+  const speedPath = points.map((point, index) => `${index && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.speed).toFixed(1)}`).join(" ");
+  const throttlePath = points.map((point, index) => `${index && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.throttle * 100).toFixed(1)}`).join(" ");
+  const brakePath = points.map((point, index) => `${index && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.brake * 100).toFixed(1)}`).join(" ");
   const gridValues = mode === "speed" ? [0, maxY / 2, maxY] : [0, 50, 100];
 
   return (
@@ -488,11 +493,18 @@ function App() {
   const [activeTab, setActiveTab] = useState<"live" | "laps">("live");
   const [now, setNow] = useState(Date.now());
   const lastSample = useRef<string>("");
+  const lastGameTime = useRef<number | null>(null);
+  const traceGap = useRef(false);
   const socketConnected = state === "live" && lastMessageAt !== null && now - lastMessageAt < 2_000;
-  const player = socketConnected ? snapshot?.player : undefined;
-  const session = socketConnected ? snapshot?.session : undefined;
   const stats = snapshot?.stats;
-  const cars = socketConnected && Array.isArray(snapshot?.cars) ? snapshot.cars : [];
+  const telemetryFresh = snapshot?.freshness?.telemetry?.state === "fresh";
+  const paused = socketConnected && snapshot?.gamePaused === true && snapshot?.freshness?.session?.state === "fresh";
+  const frozen = !socketConnected || paused || !telemetryFresh;
+  const feedLabel = !socketConnected ? "DISCONNECTED" : paused ? "PAUSED" : !telemetryFresh ? (snapshot?.telemetrySample ? "STALE" : "WAITING FOR UDP") : "LIVE DATA";
+  const shown = frozen ? snapshot?.retainedLive ?? snapshot : snapshot;
+  const player = shown?.player;
+  const session = shown?.session;
+  const cars = Array.isArray(shown?.cars) ? shown.cars : [];
   const lapHistory = Array.isArray(snapshot?.laps) ? snapshot.laps : [];
 
   useEffect(() => {
@@ -500,8 +512,10 @@ function App() {
     setPlot([]);
     setMapHistory([]);
     lastSample.current = "";
+    lastGameTime.current = null;
+    traceGap.current = false;
     window.sessionStorage.removeItem("krem-lap-history");
-  }, [snapshot?.recorder?.epoch, snapshot?.recorder?.sessionUid]);
+  }, [snapshot?.liveStreamId, snapshot?.recorder?.epoch, snapshot?.recorder?.sessionUid]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -553,29 +567,35 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const trackId = snapshot?.session?.trackId;
+    const trackId = session?.trackId;
     if (trackId === undefined || trackId === null || trackId < 0) {
       setTrackOutline(null);
       return;
     }
     setTrackOutline(trackCatalog[trackId] ?? null);
-  }, [snapshot?.session?.trackId, trackCatalog]);
+  }, [session?.trackId, trackCatalog]);
 
   useEffect(() => {
-    if (!player) return;
-    const marker = `${snapshot?.frameCount ?? ""}:${player.lapDist ?? ""}:${player.speed ?? ""}:${lastMessageAt ?? ""}`;
+    if (frozen) { traceGap.current = true; return; }
+    if (!player || !snapshot?.telemetrySample) return;
+    const { id: marker, sessionTime } = snapshot.telemetrySample;
     if (marker === lastSample.current) return;
     lastSample.current = marker;
+    // WebSocket refreshes and repeated paused frames are not driving samples.
+    if (lastGameTime.current !== null && sessionTime <= lastGameTime.current) return;
+    lastGameTime.current = sessionTime;
 
-    if (isNumber(player.speed) || isNumber(player.throttle) || isNumber(player.brake)) {
+    if (isNumber(player.speed) && isNumber(player.throttle) && isNumber(player.brake)) {
       const point: PlotPoint = {
         at: Date.now(),
+        gapBefore: traceGap.current,
         distance: isNumber(player.lapDist) ? player.lapDist : 0,
         speed: Math.max(0, player.speed ?? 0),
         throttle: Math.max(0, Math.min(1, player.throttle ?? 0)),
         brake: Math.max(0, Math.min(1, player.brake ?? 0)),
       };
       setPlot((current) => [...current.slice(-(HISTORY_LIMIT - 1)), point]);
+      traceGap.current = false;
     }
 
     const playerCar = cars.find((car) => car.isPlayer)
@@ -586,7 +606,7 @@ function App() {
         { x: playerCar.worldX!, z: playerCar.worldZ! },
       ]);
     }
-  }, [snapshot, player, cars, lastMessageAt]);
+  }, [snapshot, player, cars, frozen]);
 
   const latestEvent = snapshot?.events?.at(-1);
   const eventText = typeof latestEvent === "string"
@@ -594,7 +614,7 @@ function App() {
     : latestEvent?.code
       ? `${latestEvent.code}${isNumber(latestEvent.time) ? ` · ${latestEvent.time.toFixed(1)}s` : ""}`
       : undefined;
-  const connected = socketConnected && stats?.connected === true;
+  const connected = socketConnected && !frozen && stats?.connected === true;
   const currentSector = isNumber(player?.sector) ? Math.min(3, Math.max(1, player.sector + 1)) : null;
   const distance = isNumber(player?.lapDist) ? player.lapDist : null;
   const latestLap = lapHistory.length > 0 ? lapHistory[lapHistory.length - 1] : null;
@@ -624,13 +644,13 @@ function App() {
           </button>
           <div className={`connection ${connected ? "is-live" : ""}`}>
             <span className="connection-dot" />
-            <span>{connected ? "LIVE DATA" : socketConnected ? "WAITING FOR UDP" : state === "connecting" ? "CONNECTING" : "RECONNECTING"}</span>
+            <span>{feedLabel}</span>
           </div>
         </div>
       </header>
 
       <div className="status-strip">
-        <div className="status-item"><span className="status-label">FEED</span><strong className={connected ? "text-green" : "text-amber"}>{connected ? "RECEIVING" : socketConnected ? "WAITING FOR UDP" : "OFFLINE"}</strong></div>
+        <div className="status-item"><span className="status-label">FEED</span><strong className={connected ? "text-green" : "text-amber"}>{feedLabel}</strong></div>
         <div className="status-item"><span className="status-label">PACKETS / SEC</span><strong>{displayNumber(stats?.packetsPerSecond)}</strong></div>
         <div className="status-item"><span className="status-label">FRAME GAPS</span><strong className={(stats?.frameGaps ?? 0) > 0 ? "text-amber" : ""}>{displayNumber(stats?.frameGaps)}</strong></div>
         <div className="status-item status-wide"><span className="status-label">FORMAT</span><strong>F1 25 · 2025</strong></div>
@@ -645,10 +665,10 @@ function App() {
         <div className="connection-banner" role="status">
           <span className="banner-icon">!</span>
           <div>
-            <strong>{socketConnected ? "Waiting for F1 25 telemetry" : "Dashboard connection unavailable"}</strong>
-            <span>{socketConnected
-              ? "KREM is connected. Configure F1 25 to send UDP telemetry using format 2025 to port 20777."
-              : `Attempting to reconnect to ${socketAddress()}. Check that KREM is running.`}</span>
+            <strong>{paused ? "Game paused — readings and traces frozen" : snapshot?.telemetrySample ? "Live feed unavailable — showing last received readings" : "Waiting for F1 25 telemetry"}</strong>
+            <span>{paused ? "Inspect the existing traces at any point. Updates continue when the game resumes."
+              : snapshot?.telemetrySample ? "Retained values are not live. No new graph samples are added until telemetry resumes."
+              : "Configure F1 25 to send UDP telemetry using format 2025 to port 20777."}</span>
           </div>
         </div>
       )}
@@ -695,7 +715,7 @@ function App() {
           </article>
 
           <article className="panel panel-charts">
-            <PanelHeading eyebrow="03 / DRIVER INPUT" title="Telemetry traces" trailing={<span className="window-label">ROLLING · {plot.length} SAMPLES</span>} />
+            <PanelHeading eyebrow="03 / DRIVER INPUT" title="Telemetry traces" trailing={<span className="window-label">{frozen ? feedLabel : "ROLLING"} · {plot.length} SAMPLES</span>} />
             <div className="chart-legend">
               <span><i className="legend-speed" />SPEED <b>{displayNumber(player?.speed)} KM/H</b></span>
               <span><i className="legend-throttle" />THROTTLE <b>{percent(player?.throttle)}</b></span>
@@ -714,7 +734,7 @@ function App() {
 
           <article className="panel panel-car-health">
             <PanelHeading eyebrow="03 / CHASSIS" title="Car health" trailing={<span className="panel-chip">TYRES · WINGS</span>} />
-            <CarStatusPanel player={player} freshness={snapshot?.freshness} online={socketConnected} />
+            <CarStatusPanel player={player} freshness={snapshot?.freshness} online={socketConnected} retained={frozen} paused={paused} />
           </article>
 
           <article className="panel panel-values">

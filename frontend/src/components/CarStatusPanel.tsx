@@ -1,7 +1,7 @@
 import "./CarStatusPanel.css";
 
 type Reading = number | null | undefined;
-type Availability = "fresh" | "stale" | "missing" | "offline";
+type Availability = "fresh" | "stale" | "missing" | "offline" | "paused";
 interface Freshness { state: "missing" | "fresh" | "stale"; ageSeconds: number | null }
 interface CarStatusPlayer {
   driverNumber?: Reading;
@@ -68,14 +68,14 @@ function CarDiagram({ damage, wheelValues }: { damage: Partial<Record<DamageKey,
   </svg>;
 }
 
-export default function CarStatusPanel({ player, freshness, online }: {
-  player?: CarStatusPlayer; freshness?: Record<string, Freshness>; online: boolean;
+export default function CarStatusPanel({ player, freshness, online, retained = false, paused = false }: {
+  player?: CarStatusPlayer; freshness?: Record<string, Freshness>; online: boolean; retained?: boolean; paused?: boolean;
 }) {
-  const status = (source: string): Availability => !online ? "offline" : freshness?.[source]?.state ?? "missing";
+  const status = (source: string): Availability => !online ? "offline" : paused && freshness?.[source]?.state !== "missing" ? "paused" : freshness?.[source]?.state ?? "missing";
   const telemetryState = status("telemetry");
   const damageState = status("damage");
   const tyres = player?.tyres;
-  const reading = (value: Reading, source: Availability) => source === "fresh" && finite(value) ? value : null;
+  const reading = (value: Reading, source: Availability) => (source === "fresh" || retained) && finite(value) ? value : null;
   const damage = Object.fromEntries(PARTS.map(p => [p.key, reading(player?.damage?.[p.key], damageState)]));
   const wheelValues = WHEELS.map(wheel => ({
     wear: reading(tyres?.wearPct?.[wheel.index], damageState),
@@ -86,7 +86,7 @@ export default function CarStatusPanel({ player, freshness, online }: {
     pressure: reading(tyres?.pressurePsi?.[wheel.index], telemetryState),
   }));
   return <div className="cs-panel">
-    <div className="cs-heading"><span>NUM {online ? player?.driverNumber ?? "—" : "—"}</span><span className={`cs-availability cs-${telemetryState === "fresh" && damageState === "fresh" ? "fresh" : telemetryState === "offline" && damageState === "offline" ? "offline" : "stale"}`}>{telemetryState === "fresh" && damageState === "fresh" ? "LIVE" : "PARTIAL / STALE"}</span></div>
+    <div className="cs-heading"><span>NUM {player?.driverNumber ?? "—"}</span><span className={`cs-availability cs-${telemetryState === "fresh" && damageState === "fresh" ? "fresh" : telemetryState === "offline" && damageState === "offline" ? "offline" : "stale"}`}>{paused ? "PAUSED" : !online ? "DISCONNECTED · RETAINED" : retained ? "STALE · RETAINED" : telemetryState === "fresh" && damageState === "fresh" ? "LIVE" : "PARTIAL / STALE"}</span></div>
     <div className="cs-stage cs-stage-all">
       <span className="cs-front">↑ FRONT</span>
       <CarDiagram damage={damage} wheelValues={wheelValues.map(w => w.wear)} />

@@ -48,3 +48,5 @@
   .cs-wheel-metrics b { font-size: 11px; }
   .cs-damage-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.cs-paused { color: #f0bc60; }
