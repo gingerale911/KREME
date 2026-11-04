@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from krem.pipeline import LiveState
 from krem.ingest.protocol import F1UDPProtocol, PacketStats
 from krem.storage.lap_repository import LapRepository
+from krem.server.lap_comparison_api import create_lap_comparison_router
 
 logger = logging.getLogger("krem.server")
 
@@ -44,6 +45,10 @@ def create_app(
     app.state.live_state = live_state
     app.state.protocol = protocol
     app.state.lap_repository = lap_repository
+
+    # Register comparison routes before dynamic /api/laps/{lap_id} routes.
+    # Otherwise '/api/laps/compare' could be interpreted as lap_id='compare'.
+    app.include_router(create_lap_comparison_router(lap_repository))
 
     frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     assets_dir = frontend_dist / "assets"
