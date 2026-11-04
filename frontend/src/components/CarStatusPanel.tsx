@@ -1,9 +1,6 @@
-import { useState } from "react";
-import type { CSSProperties } from "react";
 import "./CarStatusPanel.css";
 
 type Reading = number | null | undefined;
-type Mode = "Wear" | "Temperature" | "Pressure" | "Damage";
 type Availability = "fresh" | "stale" | "missing" | "offline";
 interface Freshness { state: "missing" | "fresh" | "stale"; ageSeconds: number | null }
 interface CarStatusPlayer {
@@ -35,17 +32,23 @@ const finite = (v: Reading): v is number => typeof v === "number" && Number.isFi
 const format = (v: Reading, unit: string, digits = 0) => finite(v) ? `${v.toFixed(digits)}${unit}` : "—";
 const damageColor = (v: Reading) => finite(v) ? `hsl(${120 * (1 - Math.min(100, Math.max(0, v)) / 100)} 78% 58%)` : "#728091";
 
-function WheelReading({ label, mode, values, availability }: {
-  label: string; mode: Mode; values: { wear: Reading; damage: Reading; surface: Reading; inner: Reading; brake: Reading; pressure: Reading };
-  availability: Availability;
+function WheelReading({ label, values, telemetryAvailability, damageAvailability }: {
+  label: string;
+  values: { wear: Reading; damage: Reading; surface: Reading; inner: Reading; brake: Reading; pressure: Reading };
+  telemetryAvailability: Availability;
+  damageAvailability: Availability;
 }) {
-  const value = mode === "Wear" ? values.wear : mode === "Damage" ? values.damage : mode === "Temperature" ? values.surface : values.pressure;
-  const color = mode === "Wear" || mode === "Damage" ? damageColor(value) : finite(value) ? "#63d9ee" : "#728091";
-  return <div className={`cs-wheel cs-wheel-${label.toLowerCase()}`} style={{ "--reading-color": color } as CSSProperties} data-wheel={label}>
-    <div className="cs-wheel-label">{label} <span>{mode === "Wear" ? "WEAR" : mode === "Temperature" ? "SURFACE" : mode.toUpperCase()}</span></div>
-    <strong>{format(value, mode === "Pressure" ? " psi" : mode === "Temperature" ? "°C" : "%", mode === "Pressure" ? 1 : 0)}</strong>
-    {mode === "Temperature" && <div className="cs-wheel-extra"><span>INNER <b>{format(values.inner, "°C")}</b></span><span>BRAKE <b>{format(values.brake, "°C")}</b></span></div>}
-    {availability !== "fresh" && <small>{availability.toUpperCase()}</small>}
+  return <div className={`cs-wheel cs-wheel-${label.toLowerCase()}`}>
+    <div className="cs-wheel-heading"><strong>{label}</strong><span className={`cs-mini-status cs-${damageAvailability}`}>{damageAvailability === "fresh" ? "LIVE" : damageAvailability.toUpperCase()}</span></div>
+    <div className="cs-wheel-metrics">
+      <div><span>WEAR</span><b style={{ color: damageColor(values.wear) }}>{format(values.wear, "%")}</b></div>
+      <div><span>DAMAGE</span><b style={{ color: damageColor(values.damage) }}>{format(values.damage, "%")}</b></div>
+      <div><span>SURFACE</span><b>{format(values.surface, "°C")}</b></div>
+      <div><span>INNER</span><b>{format(values.inner, "°C")}</b></div>
+      <div><span>PRESSURE</span><b>{format(values.pressure, " psi", 1)}</b></div>
+      <div><span>BRAKE</span><b>{format(values.brake, "°C")}</b></div>
+    </div>
+    {telemetryAvailability !== "fresh" && <small className="cs-wheel-stale">TELEMETRY {telemetryAvailability.toUpperCase()}</small>}
   </div>;
 }
 
@@ -68,7 +71,6 @@ function CarDiagram({ damage, wheelValues }: { damage: Partial<Record<DamageKey,
 export default function CarStatusPanel({ player, freshness, online }: {
   player?: CarStatusPlayer; freshness?: Record<string, Freshness>; online: boolean;
 }) {
-  const [mode, setMode] = useState<Mode>("Wear");
   const status = (source: string): Availability => !online ? "offline" : freshness?.[source]?.state ?? "missing";
   const telemetryState = status("telemetry");
   const damageState = status("damage");
@@ -83,21 +85,20 @@ export default function CarStatusPanel({ player, freshness, online }: {
     brake: reading(tyres?.brakeTempC?.[wheel.index], telemetryState),
     pressure: reading(tyres?.pressurePsi?.[wheel.index], telemetryState),
   }));
-  const selectedState = mode === "Wear" || mode === "Damage" ? damageState : telemetryState;
   return <div className="cs-panel">
-    <div className="cs-heading"><span>NUM {online ? player?.driverNumber ?? "—" : "—"}</span><span className={`cs-availability cs-${selectedState}`}>{selectedState === "fresh" ? "LIVE" : selectedState.toUpperCase()}</span></div>
-    <div className="cs-modes" role="group" aria-label="Car status display mode">
-      {(["Wear", "Temperature", "Pressure", "Damage"] as Mode[]).map(item => <button key={item} type="button" aria-pressed={mode === item} onClick={() => setMode(item)}>{item}</button>)}
-    </div>
-    <div className="cs-stage">
+    <div className="cs-heading"><span>NUM {online ? player?.driverNumber ?? "—" : "—"}</span><span className={`cs-availability cs-${telemetryState === "fresh" && damageState === "fresh" ? "fresh" : telemetryState === "offline" && damageState === "offline" ? "offline" : "stale"}`}>{telemetryState === "fresh" && damageState === "fresh" ? "LIVE" : "PARTIAL / STALE"}</span></div>
+    <div className="cs-stage cs-stage-all">
       <span className="cs-front">↑ FRONT</span>
-      <CarDiagram damage={damage} wheelValues={wheelValues.map(w => mode === "Wear" ? w.wear : w.damage)} />
-      {WHEELS.map((wheel, i) => <WheelReading key={wheel.label} label={wheel.label} mode={mode} values={wheelValues[i]} availability={selectedState} />)}
+      <CarDiagram damage={damage} wheelValues={wheelValues.map(w => w.wear)} />
+      {WHEELS.map((wheel, i) => <WheelReading key={wheel.label} label={wheel.label} values={wheelValues[i]} telemetryAvailability={telemetryState} damageAvailability={damageState} />)}
     </div>
     <div className="cs-sources" role="status"><span>TELEMETRY <b className={`cs-${telemetryState}`}>{telemetryState.toUpperCase()}</b></span><span>DAMAGE <b className={`cs-${damageState}`}>{damageState.toUpperCase()}</b></span></div>
-    <div className="cs-caption">{mode === "Wear" ? "Tyre wear: 0% new · 100% worn" : mode === "Temperature" ? "Tyre surface and inner temperatures · separate brake temperatures" : mode === "Pressure" ? "Tyre pressure in psi" : "Damage: 0% undamaged · 100% fully damaged"}</div>
+    <div className="cs-caption">ALL TYRE METRICS · Wear and damage in % · temperatures in °C · pressure in psi</div>
     <div className="cs-legend"><span><i style={{ background: "#73e747" }} />0%</span><span><i style={{ background: "#e7cb47" }} />50%</span><span><i style={{ background: "#e74747" }} />100%</span><span><i style={{ background: "#728091" }} />No current data</span></div>
-    <p className="cs-note">Body colours show component damage. Tyre colours show {mode === "Wear" ? "wear" : "damage"}.</p>
-    {mode === "Damage" && <div className="cs-damage-list">{PARTS.map(part => <div key={part.key}><span>{part.label}</span><strong style={{ color: damageColor(damage[part.key]) }}>{format(damage[part.key], "%")}</strong></div>)}</div>}
+    <div className="cs-note">Tyre diagram colour represents wear. Individual readings remain visible in each tyre card.</div>
+    <section className="cs-chassis-section">
+      <div className="cs-chassis-heading"><strong>CHASSIS DAMAGE</strong><span>BODY COMPONENTS</span></div>
+      <div className="cs-damage-list">{PARTS.map(part => <div key={part.key}><span>{part.label}</span><strong style={{ color: damageColor(damage[part.key]) }}>{format(damage[part.key], "%")}</strong></div>)}</div>
+    </section>
   </div>;
 }

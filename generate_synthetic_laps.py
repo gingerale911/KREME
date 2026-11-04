@@ -1,4 +1,4 @@
-"""Insert two deterministic synthetic laps into KREM's DuckDB database.
+"""Insert five deterministic synthetic laps into KREM's DuckDB database.
 
 Place this file in the KREME project root and run after stopping the backend:
     python generate_synthetic_laps.py
@@ -107,29 +107,35 @@ def main() -> None:
         DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"Database: {DATABASE_PATH}")
-    print("Writing two synthetic demo laps using KREM's LapRepository...")
+    print("Writing five synthetic demo laps using KREM's LapRepository...")
 
     with LapDatabase(str(DATABASE_PATH)) as database:
         repository = LapRepository(database)
 
-        lap_one = make_lap(lap_number=1, lap_time_ms=91_200, pace_offset=0.0)
-        lap_two = make_lap(lap_number=2, lap_time_ms=90_700, pace_offset=2.5)
+        # Deliberately varied lap times and pace offsets make it easy to test
+        # independent pairs such as 1v2 + 2v3, 1v3 + 4v5, and so on.
+        demo_laps = [
+            make_lap(lap_number=1, lap_time_ms=91_200, pace_offset=0.0),
+            make_lap(lap_number=2, lap_time_ms=90_700, pace_offset=2.5),
+            make_lap(lap_number=3, lap_time_ms=91_850, pace_offset=-1.5),
+            make_lap(lap_number=4, lap_time_ms=90_400, pace_offset=4.0),
+            make_lap(lap_number=5, lap_time_ms=91_050, pace_offset=1.0),
+        ]
 
-        id_one = repository.save_lap(lap_one)
-        id_two = repository.save_lap(lap_two)
+        saved_ids = [repository.save_lap(lap) for lap in demo_laps]
 
         sessions = repository.get_sessions()
-        session_id = repository.session_id_for(lap_one)
+        session_id = repository.session_id_for(demo_laps[0])
         stored_laps = repository.get_laps(session_id)
 
-        print("\nSynthetic data saved successfully.")
+        print("\nFive synthetic demo laps saved successfully.")
         print(f"Session ID: {session_id}")
-        print(f"Lap 1 ID: {id_one}")
-        print(f"Lap 2 ID: {id_two}")
-        print(f"Stored laps in session: {len(stored_laps)}")
+        for lap, lap_id in zip(demo_laps, saved_ids):
+            print(f"Lap {lap['lap']}: {lap['lapTimeMs']} ms | ID: {lap_id}")
+        print(f"Stored laps in demo session: {len(stored_laps)}")
         print(f"Samples per lap: {SAMPLE_COUNT}")
         print(f"Sessions in database: {len(sessions)}")
-        print("\nLap Compare API can now load these two laps.")
+        print("\nYou can now test any two independent lap pairs side by side.")
 
 
 if __name__ == "__main__":

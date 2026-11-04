@@ -266,8 +266,11 @@ export default function LapComparePanel() {
   const [sessionId, setSessionId] = useState("");
   const [referenceId, setReferenceId] = useState("");
   const [comparisonId, setComparisonId] = useState("");
+  const [referenceId2, setReferenceId2] = useState("");
+  const [comparisonId2, setComparisonId2] = useState("");
 
   const [result, setResult] = useState<LapComparison | null>(null);
+  const [result2, setResult2] = useState<LapComparison | null>(null);
 
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loadingLaps, setLoadingLaps] = useState(false);
@@ -312,7 +315,10 @@ export default function LapComparePanel() {
       setLaps([]);
       setReferenceId("");
       setComparisonId("");
+      setReferenceId2("");
+      setComparisonId2("");
       setResult(null);
+      setResult2(null);
       return;
     }
 
@@ -322,8 +328,11 @@ export default function LapComparePanel() {
       setLoadingLaps(true);
       setError("");
       setResult(null);
+      setResult2(null);
       setReferenceId("");
       setComparisonId("");
+      setReferenceId2("");
+      setComparisonId2("");
 
       try {
         const data = await getSessionLaps(sessionId);
@@ -334,10 +343,9 @@ export default function LapComparePanel() {
 
         if (data.length > 0) {
           setReferenceId(data[0].lapId);
-
-          if (data.length > 1) {
-            setComparisonId(data[1].lapId);
-          }
+          setReferenceId2(data[0].lapId);
+          if (data.length > 1) setComparisonId(data[1].lapId);
+          if (data.length > 2) setComparisonId2(data[2].lapId);
         }
       } catch (err) {
         if (active) {
@@ -356,20 +364,31 @@ export default function LapComparePanel() {
   }, [sessionId]);
 
   async function handleCompare() {
-    if (!referenceId || !comparisonId) return;
-
-    if (referenceId === comparisonId) {
-      setError("Choose two different laps.");
+    const hasA = Boolean(referenceId && comparisonId);
+    const hasB = Boolean(referenceId2 && comparisonId2);
+    if (!hasA && !hasB) return;
+    if (hasA && referenceId === comparisonId) {
+      setError("Comparison A needs two different laps.");
+      return;
+    }
+    if (hasB && referenceId2 === comparisonId2) {
+      setError("Comparison B needs two different laps.");
       return;
     }
 
     setComparing(true);
     setError("");
     setResult(null);
+    setResult2(null);
 
     try {
-      const data = await getLapComparison(referenceId, comparisonId);
-      setResult(data);
+      const requests: Promise<LapComparison>[] = [];
+      if (hasA) requests.push(getLapComparison(referenceId, comparisonId));
+      if (hasB) requests.push(getLapComparison(referenceId2, comparisonId2));
+      const responses = await Promise.all(requests);
+      let responseIndex = 0;
+      if (hasA) setResult(responses[responseIndex++]);
+      if (hasB) setResult2(responses[responseIndex]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lap comparison failed");
     } finally {
@@ -379,6 +398,8 @@ export default function LapComparePanel() {
 
   const referenceLap = laps.find((lap) => lap.lapId === referenceId);
   const comparisonLap = laps.find((lap) => lap.lapId === comparisonId);
+  const referenceLap2 = laps.find((lap) => lap.lapId === referenceId2);
+  const comparisonLap2 = laps.find((lap) => lap.lapId === comparisonId2);
 
   return (
     <section className="lap-tab-panel">
@@ -445,18 +466,45 @@ export default function LapComparePanel() {
               </select>
             </label>
 
+            <label className="persistent-field comparison-slot-label">
+              <span>COMPARISON B · REFERENCE LAP</span>
+              <select
+                value={referenceId2}
+                disabled={loadingLaps || laps.length === 0}
+                onChange={(event) => { setReferenceId2(event.target.value); setResult2(null); }}
+              >
+                <option value="">Select lap</option>
+                {laps.map((lap) => (
+                  <option key={lap.lapId} value={lap.lapId}>Lap {lap.lapNumber} · {formatLapTime(lap.lapTimeMs)}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="persistent-field comparison-slot-label">
+              <span>COMPARISON B · COMPARISON LAP</span>
+              <select
+                value={comparisonId2}
+                disabled={loadingLaps || laps.length < 2}
+                onChange={(event) => { setComparisonId2(event.target.value); setResult2(null); }}
+              >
+                <option value="">Select lap</option>
+                {laps.map((lap) => (
+                  <option key={lap.lapId} value={lap.lapId}>Lap {lap.lapNumber} · {formatLapTime(lap.lapTimeMs)}</option>
+                ))}
+              </select>
+            </label>
+
             <button
               className="persistent-compare-button"
               disabled={
                 comparing ||
                 loadingLaps ||
-                !referenceId ||
-                !comparisonId ||
-                referenceId === comparisonId
+                (!referenceId || !comparisonId || referenceId === comparisonId) &&
+                (!referenceId2 || !comparisonId2 || referenceId2 === comparisonId2)
               }
               onClick={handleCompare}
             >
-              {comparing ? "COMPARING..." : "COMPARE LAPS"}
+              {comparing ? "COMPARING..." : "RUN SELECTED COMPARISONS"}
             </button>
           </div>
 
@@ -532,6 +580,28 @@ export default function LapComparePanel() {
             </div>
           )}
 
+          {referenceLap2 && comparisonLap2 && (
+            <div className="comparison-slot-summary">
+              <div className="comparison-slot-summary-heading">COMPARISON B · SELECTED LAPS</div>
+              <div className="persistent-lap-cards">
+                <div className="lap-card lap-card-current">
+                  <span className="lap-card-label">REFERENCE</span>
+                  <strong>Lap {referenceLap2.lapNumber}</strong>
+                  <div className="lap-card-row"><span>TIME</span><b>{formatLapTime(referenceLap2.lapTimeMs)}</b></div>
+                  <div className="lap-card-row"><span>AVG SPEED</span><b>{referenceLap2.avgSpeedKph?.toFixed(1) ?? "—"} km/h</b></div>
+                  <div className="lap-card-row"><span>STATUS</span><b>{referenceLap2.invalid ? "INVALID" : referenceLap2.partial ? "PARTIAL" : "VALID"}</b></div>
+                </div>
+                <div className="lap-card">
+                  <span className="lap-card-label">COMPARISON</span>
+                  <strong>Lap {comparisonLap2.lapNumber}</strong>
+                  <div className="lap-card-row"><span>TIME</span><b>{formatLapTime(comparisonLap2.lapTimeMs)}</b></div>
+                  <div className="lap-card-row"><span>AVG SPEED</span><b>{comparisonLap2.avgSpeedKph?.toFixed(1) ?? "—"} km/h</b></div>
+                  <div className="lap-card-row"><span>STATUS</span><b>{comparisonLap2.invalid ? "INVALID" : comparisonLap2.partial ? "PARTIAL" : "VALID"}</b></div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {result && (
             <div className="persistent-result">
               <div>
@@ -555,6 +625,26 @@ export default function LapComparePanel() {
             <SectorAnalysis referenceLap={referenceLap} comparisonLap={comparisonLap} />
           )}
 
+          {result2 && (
+            <div className="persistent-result comparison-result-secondary">
+              <div>
+                <span>COMPARISON B · TOTAL TIME DELTA</span>
+                <strong className={result2.totalTimeDeltaMs <= 0 ? "text-green" : "text-amber"}>{formatDelta(result2.totalTimeDeltaMs)}</strong>
+              </div>
+              <div>
+                <span>COMMON TRACK</span>
+                <strong>{result2.commonTrackLength.toFixed(0)} m</strong>
+              </div>
+              <div>
+                <span>VALID DELTA POINTS</span>
+                <strong>{result2.validDeltaPoints} / {result2.gridPoints}</strong>
+              </div>
+            </div>
+          )}
+          {result2 && referenceLap2 && comparisonLap2 && (
+            <SectorAnalysis referenceLap={referenceLap2} comparisonLap={comparisonLap2} />
+          )}
+
           <div className="session-store-note">
             DATA SOURCE · DUCKDB PERSISTENT LAP STORAGE
           </div>
@@ -569,32 +659,37 @@ export default function LapComparePanel() {
             <span className="panel-chip">DISTANCE ALIGNED</span>
           </div>
 
-          {result ? (
-            <>
-              <div className="persistent-preview-summary">
-                <div className="persistent-preview-stat">
-                  <span>REFERENCE LAP TIME</span>
-                  <strong>{formatLapTime(result.referenceLapTimeMs)}</strong>
-                </div>
-                <div className="persistent-preview-stat">
-                  <span>COMPARISON LAP TIME</span>
-                  <strong>{formatLapTime(result.comparisonLapTimeMs)}</strong>
-                </div>
-                <div className="persistent-preview-stat">
-                  <span>SHARED DISTANCE GRID</span>
-                  <strong>{result.gridPoints} POINTS</strong>
-                </div>
-                <div className="persistent-preview-stat">
-                  <span>TELEMETRY SAMPLES</span>
-                  <strong>{result.validDeltaPoints} ALIGNED</strong>
-                </div>
-              </div>
-              <ComparisonGraphs result={result} />
-            </>
+          {result || result2 ? (
+            <div className={`comparison-pair-graphs ${result && result2 ? "has-two-pairs" : "has-one-pair"}`}>
+              {result && (
+                <section className="comparison-pair-column">
+                  <div className="comparison-pair-title">COMPARISON A · LAP {referenceLap?.lapNumber} vs LAP {comparisonLap?.lapNumber}</div>
+                  <div className="persistent-preview-summary">
+                    <div className="persistent-preview-stat"><span>REFERENCE LAP TIME</span><strong>{formatLapTime(result.referenceLapTimeMs)}</strong></div>
+                    <div className="persistent-preview-stat"><span>COMPARISON LAP TIME</span><strong>{formatLapTime(result.comparisonLapTimeMs)}</strong></div>
+                    <div className="persistent-preview-stat"><span>SHARED DISTANCE GRID</span><strong>{result.gridPoints} POINTS</strong></div>
+                    <div className="persistent-preview-stat"><span>TELEMETRY SAMPLES</span><strong>{result.validDeltaPoints} ALIGNED</strong></div>
+                  </div>
+                  <ComparisonGraphs result={result} />
+                </section>
+              )}
+              {result2 && (
+                <section className="comparison-pair-column">
+                  <div className="comparison-pair-title">COMPARISON B · LAP {referenceLap2?.lapNumber} vs LAP {comparisonLap2?.lapNumber}</div>
+                  <div className="persistent-preview-summary">
+                    <div className="persistent-preview-stat"><span>REFERENCE LAP TIME</span><strong>{formatLapTime(result2.referenceLapTimeMs)}</strong></div>
+                    <div className="persistent-preview-stat"><span>COMPARISON LAP TIME</span><strong>{formatLapTime(result2.comparisonLapTimeMs)}</strong></div>
+                    <div className="persistent-preview-stat"><span>SHARED DISTANCE GRID</span><strong>{result2.gridPoints} POINTS</strong></div>
+                    <div className="persistent-preview-stat"><span>TELEMETRY SAMPLES</span><strong>{result2.validDeltaPoints} ALIGNED</strong></div>
+                  </div>
+                  <ComparisonGraphs result={result2} />
+                </section>
+              )}
+            </div>
           ) : (
             <div className="persistent-empty persistent-graph-empty">
               <strong>AWAITING LAP SELECTION</strong>
-              <span>Select two stored laps and run the comparison to load distance-aligned telemetry.</span>
+              <span>Select either or both independent lap pairs and run the comparison to load their distance-aligned telemetry side by side.</span>
             </div>
           )}
         </article>
