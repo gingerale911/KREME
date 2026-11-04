@@ -139,3 +139,19 @@ KREM/
 |---|---|---|
 | 2026-11-03 03:00 | `AGENTS.md` | Initial creation |
 | 2026-11-03 03:45 | Backend, `frontend/`, `tests/`, `README.md`, `pyproject.toml`, plan, `.gitignore`, `AGENTS.md` | Built and integrated the first live dashboard path; documented Gemini / Google AI Studio; fixed and verified recorder replay/session decoding; aligned the UI with the API's actual field names and feed status |
+
+## Step 1 update — 2026-11-04
+
+- Fixed historical pedal chart scaling and summary percentage formatting.
+- Added monotonic per-packet freshness and null masking in live snapshots.
+- Reset cached player/session data on UID or player-index changes; fixed the
+  telemetry handler's invalid-player-index path.
+- Replaced healthy-looking missing values, exposed telemetry/damage freshness,
+  separated tyre surface/inner/brake temperature averages, and masked live
+  values after WebSocket loss. Car silhouette is temporarily neutral.
+- Made development fallback pedal formatting accept missing values.
+- Added `tests/test_live_freshness.py` (6 synthetic tests).
+- Validation: 87 backend tests passed on Python 3.12; TypeScript/Vite production
+  build passed. Windows replacement build and live F1 25 validation pending.
+- Top-down SVG/modes and reliable lap recorder/persistence/comparison remain
+  the next steps; this update does not implement them.

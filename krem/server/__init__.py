@@ -265,7 +265,7 @@ def _status_page(live_state: LiveState, protocol: F1UDPProtocol | None) -> str:
             </div>
             <div class="stat">
                 <span class="stat-label">Throttle / Brake</span>
-                <span class="stat-value">{player['throttle']:.0%} / {player['brake']:.0%}</span>
+                <span class="stat-value">{_pedal_text(player['throttle'])} / {_pedal_text(player['brake'])}</span>
             </div>
         </div>
     </div>
@@ -291,3 +291,7 @@ def _dashboard_snapshot(
     snapshot = live_state.snapshot()
     snapshot["stats"] = _stats_snapshot(protocol)
     return snapshot
+
+
+def _pedal_text(value: float | None) -> str:
+    return "—" if value is None else f"{value:.0%}"

@@ -139,12 +139,50 @@ class LiveState:
     session_time: float = 0.0
     overall_frame_id: int = 0
 
+    # Monotonic receipt times: freshness must not depend on game/replay time.
+    _packet_times: dict[int, float] = field(default_factory=dict, repr=False)
+    _active_uid: int | None = field(default=None, repr=False)
+
+    def _reset_feed(self) -> None:
+        self.session = SessionInfo()
+        self.player = PlayerState()
+        for name in ("motion", "lap_data", "telemetry", "status", "damage",
+                     "motion_ex", "participants"):
+            setattr(self, f"latest_{name}", None)
+        self.latest_session_history.clear()
+        self.latest_tyre_sets.clear()
+        self._packet_times.clear()
+        self.events.clear()
+        self.lap_history.clear()
+        self._current_lap_samples = []
+        self._current_lap_max_speed = 0.0
+        self._last_recorded_lap = None
+
+    def _freshness(self, pid: int, now: float) -> dict[str, Any]:
+        received = self._packet_times.get(pid)
+        timeout = 12.0 if pid == PacketId.PARTICIPANTS else 2.0
+        age = None if received is None else max(0.0, now - received)
+        return {"state": "missing" if age is None else "stale" if age >= timeout else "fresh",
+                "ageSeconds": None if age is None else round(age, 3)}
+
     def update(self, packet: DecodedPacket) -> None:
         """Update live state from a decoded packet."""
         pid = packet.header.packet_id
         with self._lock:
+            uid = int(packet.header.session_uid)
+            if self._active_uid is not None and (
+                uid != self._active_uid or self.player_car_index != packet.header.player_car_index
+            ):
+                self._reset_feed()
+            self._active_uid = uid
+            self.session.session_uid = uid
             self.player_car_index = packet.header.player_car_index
             self.last_update_time = time.monotonic()
+            cars = packet.data.get("cars")
+            if cars is None or 0 <= self.player_car_index < len(cars):
+                self._packet_times[pid] = self.last_update_time
+            else:
+                self._packet_times.pop(pid, None)
             self.session_time = packet.header.session_time
             self.overall_frame_id = packet.header.overall_frame_identifier
             self.frame_count += 1
@@ -223,7 +261,7 @@ class LiveState:
     def _update_motion(self, packet: DecodedPacket) -> None:
         idx = self.player_car_index
         cars = packet.data["cars"]
-        if idx < len(cars):
+        if 0 <= idx < len(cars):
             car = cars[idx]
             self.player.g_force_lat = float(car["gForceLateral"])
             self.player.g_force_long = float(car["gForceLongitudinal"])
@@ -231,7 +269,7 @@ class LiveState:
     def _update_lap_data(self, packet: DecodedPacket) -> None:
         idx = self.player_car_index
         cars = packet.data["cars"]
-        if idx < len(cars):
+        if 0 <= idx < len(cars):
             car = cars[idx]
             p = self.player
             previous_lap = p.current_lap_num
@@ -264,7 +302,7 @@ class LiveState:
     def _update_telemetry(self, packet: DecodedPacket) -> None:
         idx = self.player_car_index
         cars = packet.data["cars"]
-        if idx < len(cars):
+        if 0 <= idx < len(cars):
             car = cars[idx]
             p = self.player
             p.speed = int(car["speed"])
@@ -275,12 +313,12 @@ class LiveState:
             p.rpm = int(car["engineRPM"])
             p.drs = int(car["drs"])
             self._record_lap_sample()
-        p.suggested_gear = packet.data.get("suggestedGear", 0)
+            p.suggested_gear = packet.data.get("suggestedGear", 0)
 
     def _update_status(self, packet: DecodedPacket) -> None:
         idx = self.player_car_index
         cars = packet.data["cars"]
-        if idx < len(cars):
+        if 0 <= idx < len(cars):
             car = cars[idx]
             p = self.player
             p.ers_store = float(car["ersStoreEnergy"])
@@ -371,7 +409,7 @@ class LiveState:
             ):
                 sector3_time = self.player.current_lap_time_ms - completed_splits
 
-            return {
+            result = {
                 "session": {
                     "uid": self.session.session_uid,
                     "trackId": self.session.track_id,
@@ -446,6 +484,44 @@ class LiveState:
                 "frameId": self.overall_frame_id,
                 "playerCarIndex": idx,
             }
+
+            now = time.monotonic()
+            groups = {
+                "telemetry": (PacketId.CAR_TELEMETRY, "speed throttle brake steer gear rpm drs suggestedGear"),
+                "status": (PacketId.CAR_STATUS, "drsAllowed ersStore ersMode fuel fuelLaps fuelCapacity tyreCompound tyreAge ersDeployedThisLap"),
+                "lap": (PacketId.LAP_DATA, "lapDist totalDist lastLapTime lapTime lapNum sector1TimeMs sector2TimeMs sector3TimeMs sector position invalid pitStatus driverStatus penalties"),
+                "motion": (PacketId.MOTION, "gLat gLong"),
+                "damage": (PacketId.CAR_DAMAGE, ""),
+                "session": (PacketId.SESSION, ""),
+                "participants": (PacketId.PARTICIPANTS, "name driverNumber"),
+            }
+            freshness = {name: self._freshness(pid, now) for name, (pid, _) in groups.items()}
+            result["freshness"] = freshness
+            player = result["player"]
+            for name, (_, keys) in groups.items():
+                if freshness[name]["state"] != "fresh":
+                    for key in keys.split():
+                        player[key] = None
+            tyres = player["tyres"]
+            if freshness["telemetry"]["state"] != "fresh":
+                for key in ("surfaceTempC", "innerTempC", "pressurePsi", "brakeTempC"):
+                    tyres[key] = None
+            if freshness["damage"]["state"] != "fresh":
+                tyres["wearPct"] = tyres["damagePct"] = None
+                player["damage"] = dict.fromkeys(player["damage"])
+            if freshness["status"]["state"] != "fresh":
+                for key in ("actualCompound", "actualCompoundName", "visualCompound", "visualCompoundName", "ageLaps"):
+                    tyres[key] = None
+            if freshness["session"]["state"] != "fresh":
+                result["session"] = {key: value if key == "uid" else None
+                                     for key, value in result["session"].items()}
+            if freshness["motion"]["state"] != "fresh":
+                result["cars"] = []
+            elif freshness["lap"]["state"] != "fresh":
+                for car in result["cars"]:
+                    for key in ("position", "lap", "sector", "lapDistance"):
+                        car[key] = None
+            return result
 
     def events_snapshot(self, limit: int | None = None) -> list[dict[str, Any]]:
         """Return a JSON-safe copy of recent event records."""

@@ -82,3 +82,25 @@ under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 F1® 25 is an official product of the FIA Formula One World Championship™.
 KREM is an independent project and is not affiliated with or endorsed by EA.
+
+## Live reading availability
+
+Live snapshots include a `freshness` map for telemetry, damage, status, lap,
+motion, session and participants. Each entry has `state` (`missing`, `fresh`,
+or `stale`) and `ageSeconds`, measured from monotonic packet receipt time.
+Frequently sent packets expire after 2 seconds; participants expire after
+12 seconds to accommodate their lower rate. These are UI availability
+thresholds, not changes to the game's packet rate.
+
+Unavailable readings are JSON `null` and display as an em dash. Actual zero
+readings remain zero. New session UIDs or player indices clear the previous
+car's cached state. A disconnected browser masks retained live values.
+The current car panel labels telemetry and damage availability separately;
+tyre surface, tyre inner and brake temperatures are separate averages.
+The existing car silhouette is neutral until the top-down component damage
+view is implemented. Pedals remain normalized to 0–1 in the API and are
+converted to percentages for display.
+
+Run `python -m pytest tests/test_live_freshness.py` for synthetic availability,
+recovery, session/player reset and temperature-channel checks. Live game
+validation remains pending.

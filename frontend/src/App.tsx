@@ -116,7 +116,13 @@ interface LapSummary {
   samples?: LapSample[];
 }
 
+interface PacketFreshness {
+  state: "missing" | "fresh" | "stale";
+  ageSeconds: number | null;
+}
+
 interface TelemetrySnapshot {
+  freshness?: Record<string, PacketFreshness>;
   stats?: Stats;
   session?: Session;
   player?: Player;
@@ -254,13 +260,14 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function safeAverage(values: Array<MaybeNumber>): number {
+function safeAverage(values: Array<MaybeNumber>): number | null {
   const numbers = values.filter(isNumber);
-  if (!numbers.length) return 0;
+  if (!numbers.length || numbers.length !== values.length) return null;
   return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
 }
 
-function ringStyle(value: number, danger = false): React.CSSProperties {
+function ringStyle(value: MaybeNumber, danger = false): React.CSSProperties {
+  if (!isNumber(value)) return { background: "rgba(255,255,255,0.12)" };
   const pct = clamp(value, 0, 100);
   const hue = danger ? 15 : 120 - (pct / 100) * 55;
   return {
@@ -268,47 +275,42 @@ function ringStyle(value: number, danger = false): React.CSSProperties {
   };
 }
 
-function RaceCarRig({ player }: { player?: Player }) {
+function RaceCarRig({ player, freshness, online }: {
+  player?: Player; freshness?: Record<string, PacketFreshness>; online: boolean;
+}) {
   const tyres = player?.tyres ?? {};
-  const tyreWear = tyres.wearPct ?? [0, 0, 0, 0];
-  const tyrePressure = tyres.pressurePsi ?? [0, 0, 0, 0];
-  const tyreTemp = tyres.surfaceTempC ?? [0, 0, 0, 0];
-  const brakeTemp = tyres.brakeTempC ?? [0, 0, 0, 0];
-  const wingDamage = {
-    frontLeft: player?.damage?.frontLeftWingDamage ?? 0,
-    frontRight: player?.damage?.frontRightWingDamage ?? 0,
-    rear: player?.damage?.rearWingDamage ?? 0,
-    floor: player?.damage?.floorDamage ?? 0,
-    diffuser: player?.damage?.diffuserDamage ?? 0,
-    sidepod: player?.damage?.sidepodDamage ?? 0,
-  };
-  const tyreHealth = clamp(100 - safeAverage(tyreWear), 0, 100);
-  const wingHealth = clamp(100 - safeAverage(Object.values(wingDamage)), 0, 100);
-  const tyreHeat = Math.max(safeAverage(tyreTemp), safeAverage(brakeTemp));
-  const pressureAverage = safeAverage(tyrePressure);
-  const wheelMeters = [
-    { label: "FL", value: clamp(100 - (tyreWear[2] ?? 0), 0, 100), color: "#60f6a3" },
-    { label: "FR", value: clamp(100 - (tyreWear[3] ?? 0), 0, 100), color: "#60f6a3" },
-    { label: "RL", value: clamp(100 - (tyreWear[0] ?? 0), 0, 100), color: "#60f6a3" },
-    { label: "RR", value: clamp(100 - (tyreWear[1] ?? 0), 0, 100), color: "#60f6a3" },
-  ];
+  const tyreWear = tyres.wearPct ?? [null, null, null, null];
+  const tyrePressure = tyres.pressurePsi ?? [null, null, null, null];
+  const tyreTemp = tyres.surfaceTempC ?? [null, null, null, null];
+  const innerTemp = tyres.innerTempC ?? [null, null, null, null];
+  const brakeTemp = tyres.brakeTempC ?? [null, null, null, null];
+  const health = (wear: MaybeNumber) => isNumber(wear) ? clamp(100 - wear, 0, 100) : null;
+  const tyreHealth = health(safeAverage(tyreWear));
+  const wingHealth = health(safeAverage([
+    player?.damage?.frontLeftWingDamage, player?.damage?.frontRightWingDamage,
+    player?.damage?.rearWingDamage,
+  ]));
+  const wheelMeters = [2, 3, 0, 1].map((index, i) => ({
+    label: ["FL", "FR", "RL", "RR"][i], value: health(tyreWear[index]),
+  }));
+  const sourceLabel = (key: string) => online ? (freshness?.[key]?.state ?? "missing").toUpperCase() : "OFFLINE";
 
   return (
     <div className="car-health-card">
       <div className="car-header-strip">
-        <span className="car-number">NUM {player?.driverNumber ?? 0}</span>
-        <span className="car-status-pill">{wingHealth > 80 && tyreHealth > 70 ? "SYSTEM OK" : "CHECK"}</span>
+        <span className="car-number">NUM {player?.driverNumber ?? "—"}</span>
+        <span className="car-status-pill">{!online ? "OFFLINE" : freshness?.damage?.state === "stale" ? "STALE" : !isNumber(wingHealth) || !isNumber(tyreHealth) ? "WAITING FOR DATA" : "DATA LIVE"}</span>
       </div>
       <div className="car-rig-wrapper">
         {wheelMeters.map((wheel, index) => (
           <div key={`wheel-${wheel.label}`} className={`wheel-meter wheel-${index + 1}`}>
             <div className="ring" style={ringStyle(wheel.value, false)}>
-              <span>{Math.round(wheel.value)}%</span>
+              <span>{displayNumber(wheel.value, 0, "%")}</span>
             </div>
             <small>{wheel.label}</small>
           </div>
         ))}
-        <svg className="race-car-svg" viewBox="0 0 720 260" role="img" aria-label="Race car health diagram">
+        <svg style={{ filter: "grayscale(1)", opacity: 0.55 }} className="race-car-svg" viewBox="0 0 720 260" role="img" aria-label="Race car health diagram">
           <defs>
             <linearGradient id="carBodyGlow" x1="0%" x2="100%" y1="0%" y2="0%">
               <stop offset="0%" stopColor="rgba(96, 246, 163, 0.85)" />
@@ -333,11 +335,14 @@ function RaceCarRig({ player }: { player?: Player }) {
           </g>
         </svg>
       </div>
+      <div className="panel-foot" role="status"><span>TELEMETRY {sourceLabel("telemetry")}</span><span>DAMAGE {sourceLabel("damage")}</span></div>
       <div className="car-metric-grid">
-        <div className="car-metric"><span>TYRE</span><strong>{Math.round(tyreHealth)}%</strong></div>
-        <div className="car-metric"><span>HEAT</span><strong>{Math.round(tyreHeat)}°C</strong></div>
-        <div className="car-metric"><span>PRESS</span><strong>{pressureAverage > 0 ? `${pressureAverage.toFixed(1)} psi` : "—"}</strong></div>
-        <div className="car-metric"><span>WING</span><strong>{Math.round(wingHealth)}%</strong></div>
+        <div className="car-metric"><span>TYRE REMAINING</span><strong>{displayNumber(tyreHealth, 0, "%")}</strong></div>
+        <div className="car-metric"><span>TYRE SURFACE AVG</span><strong>{displayNumber(safeAverage(tyreTemp), 0, "°C")}</strong></div>
+        <div className="car-metric"><span>TYRE INNER AVG</span><strong>{displayNumber(safeAverage(innerTemp), 0, "°C")}</strong></div>
+        <div className="car-metric"><span>BRAKE TEMP AVG</span><strong>{displayNumber(safeAverage(brakeTemp), 0, "°C")}</strong></div>
+        <div className="car-metric"><span>PRESSURE AVG</span><strong>{displayNumber(safeAverage(tyrePressure), 1, " psi")}</strong></div>
+        <div className="car-metric"><span>WING REMAINING</span><strong>{displayNumber(wingHealth, 0, "%")}</strong></div>
       </div>
       <div className="wing-damage-grid">
         <div><span>FL wing</span><strong>{isNumber(player?.damage?.frontLeftWingDamage) ? `${Math.round(player.damage!.frontLeftWingDamage!)}%` : "—"}</strong></div>
@@ -580,7 +585,7 @@ function LapComparisonGraph({
 
   const buildSeries = (samples: LapSample[], key: "throttle" | "brake") => {
     if (!samples.length) return "";
-    const range = 100;
+    const range = 1;
     const maxDistance = Math.max(...samples.map((sample) => Number(sample.distance ?? 0)), 1);
     return samples
       .map((sample) => {
@@ -644,10 +649,11 @@ function App() {
   const lastSample = useRef<string>("");
   const sessionIdRef = useRef<number | undefined>(undefined);
   const lapNumberRef = useRef<number | null>(null);
-  const player = snapshot?.player;
-  const session = snapshot?.session;
+  const socketConnected = state === "live" && lastMessageAt !== null && now - lastMessageAt < 2_000;
+  const player = socketConnected ? snapshot?.player : undefined;
+  const session = socketConnected ? snapshot?.session : undefined;
   const stats = snapshot?.stats;
-  const cars = Array.isArray(snapshot?.cars) ? snapshot.cars : [];
+  const cars = socketConnected && Array.isArray(snapshot?.cars) ? snapshot.cars : [];
   const lapHistory = Array.isArray(snapshot?.laps) && snapshot.laps.length > 0 ? snapshot.laps : storedLaps;
 
   useEffect(() => {
@@ -796,7 +802,6 @@ function App() {
     : latestEvent?.code
       ? `${latestEvent.code}${isNumber(latestEvent.time) ? ` · ${latestEvent.time.toFixed(1)}s` : ""}`
       : undefined;
-  const socketConnected = state === "live" && lastMessageAt !== null && now - lastMessageAt < 5_000;
   const connected = socketConnected && stats?.connected === true;
   const currentSector = isNumber(player?.sector) ? Math.min(3, Math.max(1, player.sector + 1)) : null;
   const distance = isNumber(player?.lapDist) ? player.lapDist : null;
@@ -893,7 +898,7 @@ function App() {
             <div className="timing-details">
               <div><span>LAP DISTANCE</span><strong>{distance === null ? "—" : `${Math.max(0, distance).toFixed(0)} m`}</strong></div>
               <div><span>RACE LAPS</span><strong>{isNumber(session?.totalLaps) ? `${isNumber(player?.lapNum) ? player.lapNum : "—"} / ${session.totalLaps}` : "—"}</strong></div>
-              <div><span>LAP INVALID</span><strong className={player?.invalid ? "text-red" : "text-green"}>{player?.invalid ? "YES" : player ? "NO" : "—"}</strong></div>
+              <div><span>LAP INVALID</span><strong className={player?.invalid == null ? "" : player.invalid ? "text-red" : "text-green"}>{player?.invalid == null ? "—" : player.invalid ? "YES" : "NO"}</strong></div>
             </div>
             <div className="timing-session">
               <div><span>TRACK</span><strong>{session?.trackName || "—"}</strong></div>
@@ -923,7 +928,7 @@ function App() {
 
           <article className="panel panel-car-health">
             <PanelHeading eyebrow="03 / CHASSIS" title="Car health" trailing={<span className="panel-chip">TYRES · WINGS</span>} />
-            <RaceCarRig player={player} />
+            <RaceCarRig player={player} freshness={snapshot?.freshness} online={socketConnected} />
           </article>
 
           <article className="panel panel-values">
@@ -937,8 +942,8 @@ function App() {
               <Stat label="SUGGESTED GEAR" value={displayNumber(player?.suggestedGear)} />
               <Stat label="LATERAL G" value={displayNumber(player?.gLat, 2)} />
               <Stat label="LONGITUDINAL G" value={displayNumber(player?.gLong, 2)} />
-              <Stat label="DRS" value={player?.drs ? "OPEN" : player ? "CLOSED" : "—"} />
-              <Stat label="DRS AVAILABLE" value={player ? (player.drsAllowed ? "YES" : "NO") : "—"} />
+              <Stat label="DRS" value={player?.drs == null ? "—" : player.drs ? "OPEN" : "CLOSED"} />
+              <Stat label="DRS AVAILABLE" value={player?.drsAllowed == null ? "—" : player.drsAllowed ? "YES" : "NO"} />
               <Stat label="ERS STORE" value={displayNumber(player?.ersStore, 2)} unit="MJ" />
               <Stat label="ERS MODE" value={displayNumber(player?.ersMode)} />
               <Stat label="FUEL" value={displayNumber(player?.fuel, 1)} unit="KG" />
@@ -947,7 +952,7 @@ function App() {
               <Stat label="TYRE AGE" value={displayNumber(player?.tyreAge)} unit="LAPS" />
             </div>
             <div className="values-footer">
-              <div className="driving-state"><span className="state-dot" /><span>{player ? (player.brake ?? 0) >= 0.02 ? "BRAKING" : (player.throttle ?? 0) >= 0.98 ? "FULL THROTTLE" : (player.throttle ?? 0) > 0.02 ? "ACCELERATING" : "COASTING" : "AWAITING TELEMETRY"}</span></div>
+              <div className="driving-state"><span className="state-dot" /><span>{isNumber(player?.brake) && isNumber(player?.throttle) ? (player.brake ?? 0) >= 0.02 ? "BRAKING" : (player.throttle ?? 0) >= 0.98 ? "FULL THROTTLE" : (player.throttle ?? 0) > 0.02 ? "ACCELERATING" : "COASTING" : "AWAITING TELEMETRY"}</span></div>
               <div className="coach-action">
                 <button className="coach-button" disabled title="Coming soon — Google AI Studio Gemini coaching will run server-side">
                   <span className="coach-spark">✦</span> GEMINI COACH <span className="coming-soon">COMING SOON</span>
@@ -984,8 +989,8 @@ function App() {
                   <span className="lap-card-label">BENCHMARK</span>
                   <strong>{latestLap ? `Lap ${latestLap.lap}` : "—"}</strong>
                   <div className="lap-card-row"><span>DIFF</span><b className={lapDeltaMs !== null && lapDeltaMs <= 0 ? "text-green" : "text-amber"}>{lapDeltaMs === null ? "—" : `${lapDeltaMs > 0 ? "+" : ""}${lapDeltaMs} ms`}</b></div>
-                  <div className="lap-card-row"><span>AVG THROTTLE</span><b>{displayNumber(selectedLapSummary?.avgThrottle, 1, "%")}</b></div>
-                  <div className="lap-card-row"><span>AVG BRAKE</span><b>{displayNumber(selectedLapSummary?.avgBrake, 1, "%")}</b></div>
+                  <div className="lap-card-row"><span>AVG THROTTLE</span><b>{percent(selectedLapSummary?.avgThrottle)}</b></div>
+                  <div className="lap-card-row"><span>AVG BRAKE</span><b>{percent(selectedLapSummary?.avgBrake)}</b></div>
                 </div>
               </div>
               <div className="lap-table">
@@ -1021,10 +1026,10 @@ function App() {
               </div>
               <LapComparisonGraph selected={selectedLapSummary} compareLaps={allComparedLaps} reference={latestLap} />
               <div className="lap-summary-row">
-                <div><span>Selected throttle</span><strong>{displayNumber(selectedLapSummary?.avgThrottle, 1, "%")}</strong></div>
-                <div><span>Selected brake</span><strong>{displayNumber(selectedLapSummary?.avgBrake, 1, "%")}</strong></div>
-                <div><span>Reference throttle</span><strong>{displayNumber(latestLap?.avgThrottle, 1, "%")}</strong></div>
-                <div><span>Reference brake</span><strong>{displayNumber(latestLap?.avgBrake, 1, "%")}</strong></div>
+                <div><span>Selected throttle</span><strong>{percent(selectedLapSummary?.avgThrottle)}</strong></div>
+                <div><span>Selected brake</span><strong>{percent(selectedLapSummary?.avgBrake)}</strong></div>
+                <div><span>Reference throttle</span><strong>{percent(latestLap?.avgThrottle)}</strong></div>
+                <div><span>Reference brake</span><strong>{percent(latestLap?.avgBrake)}</strong></div>
               </div>
             </article>
           </div>
