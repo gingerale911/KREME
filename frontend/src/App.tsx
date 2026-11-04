@@ -1,4 +1,5 @@
 import CarStatusPanel from "./components/CarStatusPanel";
+import LapComparePanel from "./components/LapComparePanel";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
@@ -476,76 +477,6 @@ function MiniChart({ points, mode }: { points: PlotPoint[]; mode: "speed" | "ped
   );
 }
 
-function LapComparisonGraph({
-  selected,
-  compareLaps,
-  reference,
-}: {
-  selected: LapSummary | null;
-  compareLaps: LapSummary[];
-  reference: LapSummary | null;
-}) {
-  const width = 760;
-  const height = 220;
-  const padding = { top: 20, right: 20, bottom: 28, left: 34 };
-  const selectedSamples = selected?.samples ?? [];
-  const samplesToCompare = compareLaps
-    .filter((lap) => Array.isArray(lap.samples) && lap.samples.length > 0)
-    .slice(-8);
-
-  const buildSeries = (samples: LapSample[], key: "throttle" | "brake") => {
-    const maxDistance = Math.max(...samples.map(sample => Number(sample.distance ?? 0)), 1);
-    let connected = false;
-    return samples.map(sample => {
-      if (!isNumber(sample.distance) || !isNumber(sample[key])) { connected = false; return ""; }
-      if (sample.gapBefore) connected = false;
-      const x = padding.left + sample.distance / maxDistance * (width - padding.left - padding.right);
-      const y = padding.top + (1 - sample[key]!) * (height - padding.top - padding.bottom);
-      const command = connected ? "L" : "M";
-      connected = true;
-      return `${command}${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(" ");
-  };
-
-  const selectedThrottle = buildSeries(selectedSamples, "throttle");
-  const selectedBrake = buildSeries(selectedSamples, "brake");
-  const compareThrottle = samplesToCompare.map((lap) => ({
-    color: "series-reference",
-    points: buildSeries(lap.samples ?? [], "throttle"),
-  }));
-  const compareBrake = samplesToCompare.map((lap) => ({
-    color: "series-reference-brake",
-    points: buildSeries(lap.samples ?? [], "brake"),
-  }));
-  const empty = !selectedThrottle && !selectedBrake && compareThrottle.every((lap) => !lap.points) && compareBrake.every((lap) => !lap.points);
-
-  return (
-    <svg className="lap-graph" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Throttle and brake comparison graph">
-      {[0, 25, 50, 75, 100].map((value) => {
-        const y = padding.top + (1 - value / 100) * (height - padding.top - padding.bottom);
-        return (
-          <g key={`grid-${value}`}>
-            <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} className="chart-grid" />
-            <text x={padding.left - 8} y={y + 4} textAnchor="end" className="chart-axis-label">{value}%</text>
-          </g>
-        );
-      })}
-      <line x1={padding.left} x2={width - padding.right} y1={height - padding.bottom} y2={height - padding.bottom} className="chart-grid" />
-      <line x1={padding.left} x2={padding.left} y1={padding.top} y2={height - padding.bottom} className="chart-grid" />
-      {compareThrottle.map((lap, index) => lap.points && <path key={`compare-throttle-${index}`} d={lap.points} className={lap.color} />)}
-      {compareBrake.map((lap, index) => lap.points && <path key={`compare-brake-${index}`} d={lap.points} className={lap.color} />)}
-      {selectedThrottle && <path d={selectedThrottle} className="series-throttle" />}
-      {selectedBrake && <path d={selectedBrake} className="series-brake" />}
-      {reference?.samples?.length && <path d={buildSeries(reference.samples, "throttle")} className="series-reference" />}
-      {reference?.samples?.length && <path d={buildSeries(reference.samples, "brake")} className="series-reference-brake" />}
-      {empty && <text x={width / 2} y={height / 2} textAnchor="middle" className="chart-empty">NO SAMPLE TRACE AVAILABLE</text>}
-      <text x={padding.left} y={height - 4} className="chart-axis-label">DISTANCE</text>
-      <text x={width - padding.right} y={height - 4} textAnchor="end" className="chart-axis-label">0→100%</text>
-      <text x={width / 2} y={12} textAnchor="middle" className="chart-axis-label">THROTTLE / BRAKE COMPARISON</text>
-    </svg>
-  );
-}
-
 function App() {
   const { snapshot, state, lastMessageAt } = useTelemetry();
   const [plot, setPlot] = useState<PlotPoint[]>([]);
@@ -667,12 +598,6 @@ function App() {
   const currentSector = isNumber(player?.sector) ? Math.min(3, Math.max(1, player.sector + 1)) : null;
   const distance = isNumber(player?.lapDist) ? player.lapDist : null;
   const latestLap = lapHistory.length > 0 ? lapHistory[lapHistory.length - 1] : null;
-  const selectedLapSummary = lapHistory.find((lap) => Number(lap.lap ?? -1) === selectedLap)
-    ?? latestLap ?? null;
-  const allComparedLaps = lapHistory.filter((lap) => Number(lap.lap ?? -1) !== Number(selectedLapSummary?.lap ?? -1));
-  const lapDeltaMs = latestLap && selectedLapSummary && isNumber(latestLap.lapTimeMs) && isNumber(selectedLapSummary.lapTimeMs)
-    ? latestLap.lapTimeMs - selectedLapSummary.lapTimeMs
-    : null;
   useEffect(() => {
     if (lapHistory.length === 0) return;
     const latestLapNumber = Number(latestLap?.lap ?? -1);
@@ -824,78 +749,7 @@ function App() {
           </article>
         </section>
       ) : (
-        <section className="lap-tab-panel">
-          <div className="lap-layout">
-            <article className="panel lap-main-panel">
-              <PanelHeading eyebrow="LAP ANALYSIS" title="Selected lap compare" trailing={<span className="panel-chip">{lapHistory.length} saved</span>} />
-              <div className="lap-selection-bar">
-                <label htmlFor="lap-select">Selected lap</label>
-                <select id="lap-select" value={selectedLapSummary?.lap ?? ""} onChange={(event) => setSelectedLap(Number(event.target.value) || null)}>
-                  {lapHistory.map((lap) => (
-                    <option key={`lap-option-${lap.lap ?? "unknown"}`} value={Number(lap.lap ?? 0)}>
-                      Lap {lap.lap ?? "—"}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="lap-compare-grid">
-                <div className="lap-card lap-card-current">
-                  <span className="lap-card-label">SELECTED</span>
-                  <strong>Lap {selectedLapSummary?.lap ?? "—"}</strong>
-                  <div className="lap-card-row" title={selectedLapSummary?.qualityReasons?.join(", ")}><span>STATUS</span><b>{selectedLapSummary ? `${selectedLapSummary.invalid ? "INVALID" : "VALID"}${selectedLapSummary.partial ? " · PARTIAL" : ""}` : "—"}</b></div>
-                  <div className="lap-card-row"><span>TIME</span><b>{formatTime(selectedLapSummary?.lapTimeMs)}</b></div>
-                  <div className="lap-card-row"><span>AVG SPEED</span><b>{displayNumber(selectedLapSummary?.avgSpeedKph, 1)} km/h</b></div>
-                  <div className="lap-card-row"><span>TOP SPEED</span><b>{displayNumber(selectedLapSummary?.maxSpeedKph, 1)} km/h</b></div>
-                </div>
-                <div className="lap-card">
-                  <span className="lap-card-label">BENCHMARK</span>
-                  <strong>{latestLap ? `Lap ${latestLap.lap}` : "—"}</strong>
-                  <div className="lap-card-row"><span>DIFF</span><b className={lapDeltaMs !== null && lapDeltaMs <= 0 ? "text-green" : "text-amber"}>{lapDeltaMs === null ? "—" : `${lapDeltaMs > 0 ? "+" : ""}${lapDeltaMs} ms`}</b></div>
-                  <div className="lap-card-row"><span>AVG THROTTLE</span><b>{percent(selectedLapSummary?.avgThrottle)}</b></div>
-                  <div className="lap-card-row"><span>AVG BRAKE</span><b>{percent(selectedLapSummary?.avgBrake)}</b></div>
-                </div>
-              </div>
-              <div className="lap-table">
-                <div className="lap-table-head">
-                  <span>Lap</span>
-                  <span>Time</span>
-                  <span>Delta</span>
-                  <span>Avg speed</span>
-                </div>
-                {allComparedLaps.length === 0 && <div className="lap-table-empty">No other laps to compare against the selected lap.</div>}
-                {allComparedLaps.slice().reverse().map((lap) => {
-                  const deltaMs = selectedLapSummary && isNumber(selectedLapSummary.lapTimeMs) && isNumber(lap.lapTimeMs)
-                    ? lap.lapTimeMs - selectedLapSummary.lapTimeMs
-                    : null;
-                  return (
-                    <div key={`lap-compare-${lap.lap ?? "unknown"}`} className="lap-table-row lap-table-row-clickable" onClick={() => setSelectedLap(Number(lap.lap ?? 0) || null)}>
-                      <span>{lap.lap ?? "—"}</span>
-                      <span>{formatTime(lap.lapTimeMs)}</span>
-                      <span className={deltaMs !== null && deltaMs <= 0 ? "text-green" : "text-amber"}>{deltaMs === null ? "—" : `${deltaMs > 0 ? "+" : ""}${deltaMs} ms`}</span>
-                      <span>{displayNumber(lap.avgSpeedKph, 1)} km/h</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="session-store-note">Recorded in backend memory. Restarts clear laps; disk persistence comes next.</div>
-            </article>
-
-            <article className="panel lap-graph-panel">
-              <PanelHeading eyebrow="GRAPH" title="Throttle / brake trace" trailing={<span className="panel-chip">selected vs reference</span>} />
-              <div className="lap-graph-meta">
-                <span>Selected {selectedLapSummary ? `Lap ${selectedLapSummary.lap}` : "—"}</span>
-                <span>Reference {latestLap ? `Lap ${latestLap.lap}` : "—"}</span>
-              </div>
-              <LapComparisonGraph selected={selectedLapSummary} compareLaps={allComparedLaps} reference={latestLap} />
-              <div className="lap-summary-row">
-                <div><span>Selected throttle</span><strong>{percent(selectedLapSummary?.avgThrottle)}</strong></div>
-                <div><span>Selected brake</span><strong>{percent(selectedLapSummary?.avgBrake)}</strong></div>
-                <div><span>Reference throttle</span><strong>{percent(latestLap?.avgThrottle)}</strong></div>
-                <div><span>Reference brake</span><strong>{percent(latestLap?.avgBrake)}</strong></div>
-              </div>
-            </article>
-          </div>
-        </section>
+        <LapComparePanel />
       )}
 
       <footer className="footer">
