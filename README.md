@@ -95,10 +95,16 @@ thresholds, not changes to the game's packet rate.
 Unavailable readings are JSON `null` and display as an em dash. Actual zero
 readings remain zero. New session UIDs or player indices clear the previous
 car's cached state. A disconnected browser masks retained live values.
-The current car panel labels telemetry and damage availability separately;
-tyre surface, tyre inner and brake temperatures are separate averages.
-The existing car silhouette is neutral until the top-down component damage
-view is implemented. Pedals remain normalized to 0–1 in the API and are
+The car panel labels telemetry and damage availability separately.
+The top-down car offers Wear, Temperature, Pressure and Damage modes.
+Wheel labels map RL/RR/FL/FR packet indices to the correct physical corners.
+Temperature shows surface, inner and brake readings for each wheel; pressure
+is in psi. Wear displays percent worn (0% new), not remaining tyre life.
+Body colours always represent independent component damage; tyre colours
+represent wear in Wear mode and damage otherwise. Grey indicates unavailable
+data. Both sidepods share the single sidepod damage reading provided by the
+packet. Colour is a linear percentage scale, not a calibrated temperature or
+pressure safety recommendation. Pedals remain normalized to 0–1 in the API and are
 converted to percentages for display.
 
 Run `python -m pytest tests/test_live_freshness.py` for synthetic availability,

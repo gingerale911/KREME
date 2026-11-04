@@ -1,3 +1,4 @@
+import CarStatusPanel from "./components/CarStatusPanel";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
@@ -254,104 +255,6 @@ function useTelemetry() {
   }, []);
 
   return { snapshot, state, lastMessageAt };
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function safeAverage(values: Array<MaybeNumber>): number | null {
-  const numbers = values.filter(isNumber);
-  if (!numbers.length || numbers.length !== values.length) return null;
-  return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
-}
-
-function ringStyle(value: MaybeNumber, danger = false): React.CSSProperties {
-  if (!isNumber(value)) return { background: "rgba(255,255,255,0.12)" };
-  const pct = clamp(value, 0, 100);
-  const hue = danger ? 15 : 120 - (pct / 100) * 55;
-  return {
-    background: `conic-gradient(from 180deg, hsl(${hue} 100% 62%) ${pct}%, rgba(255,255,255,0.12) ${pct}% 100%)`,
-  };
-}
-
-function RaceCarRig({ player, freshness, online }: {
-  player?: Player; freshness?: Record<string, PacketFreshness>; online: boolean;
-}) {
-  const tyres = player?.tyres ?? {};
-  const tyreWear = tyres.wearPct ?? [null, null, null, null];
-  const tyrePressure = tyres.pressurePsi ?? [null, null, null, null];
-  const tyreTemp = tyres.surfaceTempC ?? [null, null, null, null];
-  const innerTemp = tyres.innerTempC ?? [null, null, null, null];
-  const brakeTemp = tyres.brakeTempC ?? [null, null, null, null];
-  const health = (wear: MaybeNumber) => isNumber(wear) ? clamp(100 - wear, 0, 100) : null;
-  const tyreHealth = health(safeAverage(tyreWear));
-  const wingHealth = health(safeAverage([
-    player?.damage?.frontLeftWingDamage, player?.damage?.frontRightWingDamage,
-    player?.damage?.rearWingDamage,
-  ]));
-  const wheelMeters = [2, 3, 0, 1].map((index, i) => ({
-    label: ["FL", "FR", "RL", "RR"][i], value: health(tyreWear[index]),
-  }));
-  const sourceLabel = (key: string) => online ? (freshness?.[key]?.state ?? "missing").toUpperCase() : "OFFLINE";
-
-  return (
-    <div className="car-health-card">
-      <div className="car-header-strip">
-        <span className="car-number">NUM {player?.driverNumber ?? "—"}</span>
-        <span className="car-status-pill">{!online ? "OFFLINE" : freshness?.damage?.state === "stale" ? "STALE" : !isNumber(wingHealth) || !isNumber(tyreHealth) ? "WAITING FOR DATA" : "DATA LIVE"}</span>
-      </div>
-      <div className="car-rig-wrapper">
-        {wheelMeters.map((wheel, index) => (
-          <div key={`wheel-${wheel.label}`} className={`wheel-meter wheel-${index + 1}`}>
-            <div className="ring" style={ringStyle(wheel.value, false)}>
-              <span>{displayNumber(wheel.value, 0, "%")}</span>
-            </div>
-            <small>{wheel.label}</small>
-          </div>
-        ))}
-        <svg style={{ filter: "grayscale(1)", opacity: 0.55 }} className="race-car-svg" viewBox="0 0 720 260" role="img" aria-label="Race car health diagram">
-          <defs>
-            <linearGradient id="carBodyGlow" x1="0%" x2="100%" y1="0%" y2="0%">
-              <stop offset="0%" stopColor="rgba(96, 246, 163, 0.85)" />
-              <stop offset="100%" stopColor="rgba(93, 192, 255, 0.65)" />
-            </linearGradient>
-          </defs>
-          <g className="car-silhouette">
-            <path d="M85 155 L165 110 L285 120 L340 96 L470 100 L570 130 L655 150 L652 176 L620 184 L590 198 L532 192 L420 206 L320 206 L190 198 L126 180 L94 170 Z" fill="rgba(18, 28, 38, 0.9)" stroke="rgba(96,246,163,0.95)" strokeWidth="2" />
-            <path d="M155 118 L180 100 L245 98 L270 109 L220 124 L155 118 Z" fill="rgba(96,246,163,0.12)" stroke="rgba(96,246,163,0.8)" strokeWidth="2" />
-            <path d="M485 102 L548 108 L578 126 L542 145 L498 136 L470 123 Z" fill="rgba(146, 200, 255, 0.12)" stroke="rgba(96,246,163,0.7)" strokeWidth="2" />
-            <path d="M215 118 L275 118 L283 174 L210 174 Z" fill="rgba(26, 44, 55, 0.85)" stroke="rgba(96,246,163,0.75)" strokeWidth="2" />
-            <circle cx="185" cy="186" r="38" fill="rgba(12, 18, 22, 0.9)" stroke="rgba(96,246,163,0.85)" strokeWidth="2" />
-            <circle cx="520" cy="186" r="38" fill="rgba(12, 18, 22, 0.9)" stroke="rgba(96,246,163,0.85)" strokeWidth="2" />
-            <circle cx="58" cy="184" r="25" fill="rgba(12, 18, 22, 0.9)" stroke="rgba(96,246,163,0.85)" strokeWidth="2" />
-            <circle cx="650" cy="184" r="25" fill="rgba(12, 18, 22, 0.9)" stroke="rgba(96,246,163,0.85)" strokeWidth="2" />
-            <path d="M201 92 L220 60 L270 62 L282 100" fill="none" stroke="rgba(96,246,163,0.8)" strokeWidth="2" />
-            <path d="M496 94 L520 60 L565 60 L581 108" fill="none" stroke="rgba(96,246,163,0.8)" strokeWidth="2" />
-            <path d="M238 146 L247 188" stroke="rgba(96,246,163,0.75)" strokeWidth="2" />
-            <path d="M490 146 L481 188" stroke="rgba(96,246,163,0.75)" strokeWidth="2" />
-            <path d="M112 162 L136 146" stroke="rgba(96,246,163,0.6)" strokeWidth="2" />
-            <path d="M590 162 L614 146" stroke="rgba(96,246,163,0.6)" strokeWidth="2" />
-          </g>
-        </svg>
-      </div>
-      <div className="panel-foot" role="status"><span>TELEMETRY {sourceLabel("telemetry")}</span><span>DAMAGE {sourceLabel("damage")}</span></div>
-      <div className="car-metric-grid">
-        <div className="car-metric"><span>TYRE REMAINING</span><strong>{displayNumber(tyreHealth, 0, "%")}</strong></div>
-        <div className="car-metric"><span>TYRE SURFACE AVG</span><strong>{displayNumber(safeAverage(tyreTemp), 0, "°C")}</strong></div>
-        <div className="car-metric"><span>TYRE INNER AVG</span><strong>{displayNumber(safeAverage(innerTemp), 0, "°C")}</strong></div>
-        <div className="car-metric"><span>BRAKE TEMP AVG</span><strong>{displayNumber(safeAverage(brakeTemp), 0, "°C")}</strong></div>
-        <div className="car-metric"><span>PRESSURE AVG</span><strong>{displayNumber(safeAverage(tyrePressure), 1, " psi")}</strong></div>
-        <div className="car-metric"><span>WING REMAINING</span><strong>{displayNumber(wingHealth, 0, "%")}</strong></div>
-      </div>
-      <div className="wing-damage-grid">
-        <div><span>FL wing</span><strong>{isNumber(player?.damage?.frontLeftWingDamage) ? `${Math.round(player.damage!.frontLeftWingDamage!)}%` : "—"}</strong></div>
-        <div><span>FR wing</span><strong>{isNumber(player?.damage?.frontRightWingDamage) ? `${Math.round(player.damage!.frontRightWingDamage!)}%` : "—"}</strong></div>
-        <div><span>Rear</span><strong>{isNumber(player?.damage?.rearWingDamage) ? `${Math.round(player.damage!.rearWingDamage!)}%` : "—"}</strong></div>
-        <div><span>Floor</span><strong>{isNumber(player?.damage?.floorDamage) ? `${Math.round(player.damage!.floorDamage!)}%` : "—"}</strong></div>
-      </div>
-    </div>
-  );
 }
 
 function PanelHeading({ eyebrow, title, trailing }: { eyebrow: string; title: string; trailing?: React.ReactNode }) {
@@ -928,7 +831,7 @@ function App() {
 
           <article className="panel panel-car-health">
             <PanelHeading eyebrow="03 / CHASSIS" title="Car health" trailing={<span className="panel-chip">TYRES · WINGS</span>} />
-            <RaceCarRig player={player} freshness={snapshot?.freshness} online={socketConnected} />
+            <CarStatusPanel player={player} freshness={snapshot?.freshness} online={socketConnected} />
           </article>
 
           <article className="panel panel-values">

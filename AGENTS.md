@@ -155,3 +155,20 @@ KREM/
   build passed. Windows replacement build and live F1 25 validation pending.
 - Top-down SVG/modes and reliable lap recorder/persistence/comparison remain
   the next steps; this update does not implement them.
+
+## Step 2 update — 2026-11-04
+
+- Extracted the car panel into `frontend/src/components/CarStatusPanel.tsx`
+  and scoped CSS. The main dashboard retains the existing telemetry stream.
+- Added top-down SVG, correct wheel mapping, Wear/Temperature/Pressure/Damage
+  buttons, per-wheel surface/inner/brake temperatures and pressure.
+- Added independent wing/floor/diffuser/sidepod damage colours, explicit
+  percentage legend, grey unavailable parts, and six damage detail rows.
+- The single sidepod packet reading colours both sidepods; this is labelled.
+- No new runtime dependencies, polling endpoints or backend changes.
+- Step 1 Windows validation: user confirmed 87 tests and production build pass.
+- Live F1 25 validation remains pending.
+- Step 2 validation: TypeScript/Vite build passed. Server-rendered component
+  checks passed for wheel mapping, independent damage colours, four controls,
+  and missing/stale/offline masking. Browser interaction/layout tests were
+  blocked by a failed Chromium download; user visual checks remain pending.
