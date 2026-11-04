@@ -172,3 +172,25 @@ KREM/
   checks passed for wheel mapping, independent damage colours, four controls,
   and missing/stale/offline masking. Browser interaction/layout tests were
   blocked by a failed Chromium download; user visual checks remain pending.
+
+## Step 3 update — 2026-11-04
+
+- Added bounded exact-frame `LapRecorder`; removed latest-value lap sampling
+  from LiveState. Ingest and snapshot draining run under LiveState's lock.
+- Stored elapsed time, distance, normalized inputs, speed, frame/session IDs,
+  explicit missing samples and gap markers. Session UIDs in records are strings.
+- Preserved previous-lap sectors at transitions; incorporated player history
+  timings/validity. Added invalid/partial flags and quality reasons.
+- Added conservative full-timeline invalidation for flashbacks/rewinds, and
+  resets for session/player changes. No guessed time for skipped boundaries.
+- Removed stale browser lap-cache merging; existing UI labels record quality
+  and uses SVG path breaks for missing samples. Car panel remains unchanged.
+- Updated the legacy lap test with real advancing frame IDs and zeroed new-lap
+  splits; it now also checks that previous sector times survive the boundary.
+- Added 19 recorder tests: exact pairing, reordering/duplicates, mismatches,
+  missing/invalid samples, partial/pit laps, gaps, sectors/history, flashbacks,
+  resets, bounds, age flush and LiveState integration.
+- Validation: 106 backend tests passed (Python 3.12); TypeScript/Vite build
+  passed. Windows and live-game checks for this step remain pending.
+- Remaining: DuckDB persistence and trace APIs, distance comparison API,
+  synchronized four-chart comparison UI, end-to-end capture/replay validation.

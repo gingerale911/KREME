@@ -98,6 +98,8 @@ interface TelemetryEvent {
 }
 
 interface LapSample {
+  gapBefore?: boolean;
+  elapsedTimeMs?: MaybeNumber;
   distance?: MaybeNumber;
   throttle?: MaybeNumber;
   brake?: MaybeNumber;
@@ -105,6 +107,10 @@ interface LapSample {
 }
 
 interface LapSummary {
+  id?: string;
+  invalid?: boolean;
+  partial?: boolean;
+  qualityReasons?: string[];
   lap?: MaybeNumber;
   lapTimeMs?: MaybeNumber;
   sector1TimeMs?: MaybeNumber;
@@ -123,6 +129,7 @@ interface PacketFreshness {
 }
 
 interface TelemetrySnapshot {
+  recorder?: { epoch?: number; sessionUid?: string | null };
   freshness?: Record<string, PacketFreshness>;
   stats?: Stats;
   session?: Session;
@@ -487,16 +494,17 @@ function LapComparisonGraph({
     .slice(-8);
 
   const buildSeries = (samples: LapSample[], key: "throttle" | "brake") => {
-    if (!samples.length) return "";
-    const range = 1;
-    const maxDistance = Math.max(...samples.map((sample) => Number(sample.distance ?? 0)), 1);
-    return samples
-      .map((sample) => {
-        const x = padding.left + (Number(sample.distance ?? 0) / maxDistance) * (width - padding.left - padding.right);
-        const y = padding.top + (1 - (Number(sample[key] ?? 0) / range)) * (height - padding.top - padding.bottom);
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(" ");
+    const maxDistance = Math.max(...samples.map(sample => Number(sample.distance ?? 0)), 1);
+    let connected = false;
+    return samples.map(sample => {
+      if (!isNumber(sample.distance) || !isNumber(sample[key])) { connected = false; return ""; }
+      if (sample.gapBefore) connected = false;
+      const x = padding.left + sample.distance / maxDistance * (width - padding.left - padding.right);
+      const y = padding.top + (1 - sample[key]!) * (height - padding.top - padding.bottom);
+      const command = connected ? "L" : "M";
+      connected = true;
+      return `${command}${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
   };
 
   const selectedThrottle = buildSeries(selectedSamples, "throttle");
@@ -524,12 +532,12 @@ function LapComparisonGraph({
       })}
       <line x1={padding.left} x2={width - padding.right} y1={height - padding.bottom} y2={height - padding.bottom} className="chart-grid" />
       <line x1={padding.left} x2={padding.left} y1={padding.top} y2={height - padding.bottom} className="chart-grid" />
-      {compareThrottle.map((lap, index) => lap.points && <polyline key={`compare-throttle-${index}`} points={lap.points} className={lap.color} />)}
-      {compareBrake.map((lap, index) => lap.points && <polyline key={`compare-brake-${index}`} points={lap.points} className={lap.color} />)}
-      {selectedThrottle && <polyline points={selectedThrottle} className="series-throttle" />}
-      {selectedBrake && <polyline points={selectedBrake} className="series-brake" />}
-      {reference?.samples?.length && <polyline points={buildSeries(reference.samples, "throttle")} className="series-reference" />}
-      {reference?.samples?.length && <polyline points={buildSeries(reference.samples, "brake")} className="series-reference-brake" />}
+      {compareThrottle.map((lap, index) => lap.points && <path key={`compare-throttle-${index}`} d={lap.points} className={lap.color} />)}
+      {compareBrake.map((lap, index) => lap.points && <path key={`compare-brake-${index}`} d={lap.points} className={lap.color} />)}
+      {selectedThrottle && <path d={selectedThrottle} className="series-throttle" />}
+      {selectedBrake && <path d={selectedBrake} className="series-brake" />}
+      {reference?.samples?.length && <path d={buildSeries(reference.samples, "throttle")} className="series-reference" />}
+      {reference?.samples?.length && <path d={buildSeries(reference.samples, "brake")} className="series-reference-brake" />}
       {empty && <text x={width / 2} y={height / 2} textAnchor="middle" className="chart-empty">NO SAMPLE TRACE AVAILABLE</text>}
       <text x={padding.left} y={height - 4} className="chart-axis-label">DISTANCE</text>
       <text x={width - padding.right} y={height - 4} textAnchor="end" className="chart-axis-label">0→100%</text>
@@ -545,74 +553,24 @@ function App() {
   const [trackCatalog, setTrackCatalog] = useState<Record<number, TrackOutline>>({});
   const [trackOutline, setTrackOutline] = useState<TrackOutline | null>(null);
   const [lightTheme, setLightTheme] = useState(false);
-  const [storedLaps, setStoredLaps] = useState<LapSummary[]>([]);
   const [selectedLap, setSelectedLap] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<"live" | "laps">("live");
   const [now, setNow] = useState(Date.now());
   const lastSample = useRef<string>("");
-  const sessionIdRef = useRef<number | undefined>(undefined);
-  const lapNumberRef = useRef<number | null>(null);
   const socketConnected = state === "live" && lastMessageAt !== null && now - lastMessageAt < 2_000;
   const player = socketConnected ? snapshot?.player : undefined;
   const session = socketConnected ? snapshot?.session : undefined;
   const stats = snapshot?.stats;
   const cars = socketConnected && Array.isArray(snapshot?.cars) ? snapshot.cars : [];
-  const lapHistory = Array.isArray(snapshot?.laps) && snapshot.laps.length > 0 ? snapshot.laps : storedLaps;
+  const lapHistory = Array.isArray(snapshot?.laps) ? snapshot.laps : [];
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const saved = window.sessionStorage.getItem("krem-lap-history");
-      if (!saved) return;
-      const parsed = JSON.parse(saved) as LapSummary[];
-      if (Array.isArray(parsed)) {
-        setStoredLaps(parsed);
-      }
-    } catch {
-      // Ignore malformed cached lap data; the live feed will rebuild it.
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !Array.isArray(snapshot?.laps) || snapshot.laps.length === 0) return;
-    setStoredLaps((current) => {
-      const merged = [...current, ...snapshot.laps!];
-      const unique = new Map<number, LapSummary>();
-      for (const lap of merged) {
-        const key = Number(lap.lap ?? -1);
-        if (key < 0) continue;
-        unique.set(key, lap);
-      }
-      const next = Array.from(unique.values()).slice(-10);
-      window.sessionStorage.setItem("krem-lap-history", JSON.stringify(next));
-      return next;
-    });
-  }, [snapshot?.laps]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const currentSessionId = snapshot?.session?.uid;
-    if (currentSessionId !== undefined && currentSessionId !== null) {
-      const previousSessionId = sessionIdRef.current;
-      if (previousSessionId !== undefined && previousSessionId !== currentSessionId) {
-        setStoredLaps([]);
-        setSelectedLap(null);
-        window.sessionStorage.removeItem("krem-lap-history");
-      }
-      sessionIdRef.current = currentSessionId;
-    }
-  }, [snapshot?.session?.uid]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const currentLapNum = isNumber(player?.lapNum) ? player.lapNum : null;
-    if (currentLapNum !== null && lapNumberRef.current !== null && currentLapNum < lapNumberRef.current) {
-      setStoredLaps([]);
-      setSelectedLap(null);
-      window.sessionStorage.removeItem("krem-lap-history");
-    }
-    lapNumberRef.current = currentLapNum;
-  }, [player?.lapNum]);
+    setSelectedLap(null);
+    setPlot([]);
+    setMapHistory([]);
+    lastSample.current = "";
+    window.sessionStorage.removeItem("krem-lap-history");
+  }, [snapshot?.recorder?.epoch, snapshot?.recorder?.sessionUid]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -884,6 +842,7 @@ function App() {
                 <div className="lap-card lap-card-current">
                   <span className="lap-card-label">SELECTED</span>
                   <strong>Lap {selectedLapSummary?.lap ?? "—"}</strong>
+                  <div className="lap-card-row" title={selectedLapSummary?.qualityReasons?.join(", ")}><span>STATUS</span><b>{selectedLapSummary ? `${selectedLapSummary.invalid ? "INVALID" : "VALID"}${selectedLapSummary.partial ? " · PARTIAL" : ""}` : "—"}</b></div>
                   <div className="lap-card-row"><span>TIME</span><b>{formatTime(selectedLapSummary?.lapTimeMs)}</b></div>
                   <div className="lap-card-row"><span>AVG SPEED</span><b>{displayNumber(selectedLapSummary?.avgSpeedKph, 1)} km/h</b></div>
                   <div className="lap-card-row"><span>TOP SPEED</span><b>{displayNumber(selectedLapSummary?.maxSpeedKph, 1)} km/h</b></div>
@@ -918,7 +877,7 @@ function App() {
                   );
                 })}
               </div>
-              <div className="session-store-note">Stored in browser session storage while the dashboard remains open.</div>
+              <div className="session-store-note">Recorded in backend memory. Restarts clear laps; disk persistence comes next.</div>
             </article>
 
             <article className="panel lap-graph-panel">

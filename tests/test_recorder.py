@@ -83,6 +83,7 @@ def test_live_state_records_lap_history():
         "session_uid": 1,
         "session_time": 12.5,
         "overall_frame_identifier": 42,
+        "frame_identifier": 42,
         "player_car_index": 0,
     }
 
@@ -122,15 +123,20 @@ def test_live_state_records_lap_history():
         }]},
     )
     next_lap_packet = SimpleNamespace(
-        header=SimpleNamespace(packet_id=PacketId.LAP_DATA, **base_header),
-        data={"cars": [lap_car(2, 52_000, 41_000, 17_000, 15_000)]},
+        header=SimpleNamespace(packet_id=PacketId.LAP_DATA, **{**base_header, "overall_frame_identifier": 43, "frame_identifier": 43, "session_time": 12.6}),
+        data={"cars": [lap_car(2, 52_000, 0, 0, 0)]},
     )
 
     state.update(lap_packet)
     state.update(telemetry_packet)
     state.update(next_lap_packet)
 
+    state.lap_recorder.flush(force=True)
     laps = state.lap_history_snapshot()
     assert laps[-1]["lap"] == 1
     assert laps[-1]["lapTimeMs"] == 52_000
     assert laps[-1]["avgSpeedKph"] == 180.0
+
+    assert laps[-1]["sector1TimeMs"] == 18_000
+    assert laps[-1]["sector2TimeMs"] == 16_000
+    assert laps[-1]["partial"]

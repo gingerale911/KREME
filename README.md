@@ -110,3 +110,47 @@ converted to percentages for display.
 Run `python -m pytest tests/test_live_freshness.py` for synthetic availability,
 recovery, session/player reset and temperature-channel checks. Live game
 validation remains pending.
+
+## Lap recording (Step 3)
+
+`krem/pipeline/lap_recorder.py` owns the in-memory lap recorder. It joins
+LapData and CarTelemetry on the same overall frame identifier, verifies the
+regular frame identifier and session time (within 20 ms), and processes frames
+in order. It waits up to 8 advancing frames or 250 ms for packet reordering;
+snapshot/API reads drain aged entries. This wait applies to recording only,
+not to the live car panel. Packets arriving after the window are ignored by
+the recorder. Exact matching intentionally favours gaps over guessed inputs.
+
+Samples include elapsed milliseconds, distance in metres, speed in km/h,
+normalized throttle/brake, both frame identifiers, session time, lap number,
+player index and the full session UID as a string. Missing/invalid inputs are
+null. Gaps over 250 ms are flagged; the existing trace breaks at gaps.
+
+A sequential lap-number transition finalizes the previous lap using the new
+packet's last-lap time, while retaining the previous lap's sector splits.
+Player SessionHistory packets can supply official sector times and validity.
+Invalid flags are sticky. A skipped lap number never supplies a guessed time.
+
+Records expose `invalid`, `partial`, `qualityReasons`, and `sampleCount`.
+Near-start coverage requires distance 0–25 m and elapsed time <=250 ms;
+near-end coverage requires the last sample within 50 m of the known finish
+and within 250 ms of the reported lap time. Mid-lap joins, missing inputs,
+large gaps, pit/out laps, reverse distance and missing boundaries are labelled
+partial. These conservative capture-quality checks are separate from game
+lap validity. Missing trace data cannot be repaired by SessionHistory.
+
+A session UID or player change clears the recorder. A flashback event,
+backwards session time or backwards lap progress invalidates the entire
+old timeline, increments the recorder epoch and starts a new capture.
+This deliberately discards earlier completed laps too. Late packets outside
+the reorder window do not cause rewinds. Raw UDP capture files are unchanged.
+
+Retention is capped at 16 completed records and 30,000 samples per lap.
+Unfinished laps remain in progress; the API does not claim they are completed.
+Samples are still in the existing snapshot payload until Step 4 moves traces
+into on-demand APIs and adds DuckDB persistence. Restarting the backend loses
+these in-memory laps. The UI no longer merges old browser-cached lap records.
+
+Verification: `python -m pytest tests/test_lap_recorder.py tests/test_recorder.py`.
+The tests use synthetic packets; real F1 25 capture/replay validation, including
+actual packet alignment and flashbacks, is still required.
