@@ -1,3 +1,5 @@
+import CarStatusPanel from "./components/CarStatusPanel";
+import LapComparePanel from "./components/LapComparePanel";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
@@ -97,6 +99,8 @@ interface TelemetryEvent {
 }
 
 interface LapSample {
+  gapBefore?: boolean;
+  elapsedTimeMs?: MaybeNumber;
   distance?: MaybeNumber;
   throttle?: MaybeNumber;
   brake?: MaybeNumber;
@@ -104,6 +108,10 @@ interface LapSample {
 }
 
 interface LapSummary {
+  id?: string;
+  invalid?: boolean;
+  partial?: boolean;
+  qualityReasons?: string[];
   lap?: MaybeNumber;
   lapTimeMs?: MaybeNumber;
   sector1TimeMs?: MaybeNumber;
@@ -116,6 +124,10 @@ interface LapSummary {
   samples?: LapSample[];
 }
 
+interface PacketFreshness {
+  state: "missing" | "fresh" | "stale";
+  ageSeconds: number | null;
+}
 
 interface CornerDeltaUI {
   turn: string;
@@ -153,6 +165,12 @@ interface CoachAnalysisResponse {
 }
 
 interface TelemetrySnapshot {
+  liveStreamId?: string;
+  gamePaused?: boolean;
+  telemetrySample?: { id: string; sessionTime: number } | null;
+  retainedLive?: { player?: Player; session?: Session; cars?: Car[] };
+  recorder?: { epoch?: number; sessionUid?: string | null };
+  freshness?: Record<string, PacketFreshness>;
   stats?: Stats;
   session?: Session;
   player?: Player;
@@ -163,6 +181,7 @@ interface TelemetrySnapshot {
 }
 
 interface PlotPoint {
+  gapBefore?: boolean;
   at: number;
   distance: number;
   speed: number;
@@ -294,105 +313,6 @@ function useTelemetry() {
   }, []);
 
   return { snapshot, state, lastMessageAt };
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function safeAverage(values: Array<MaybeNumber>): number {
-  const numbers = values.filter(isNumber);
-  if (!numbers.length) return 0;
-  return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
-}
-
-function ringStyle(value: number, danger = false): React.CSSProperties {
-  const pct = clamp(value, 0, 100);
-  const hue = danger ? 15 : 120 - (pct / 100) * 55;
-  return {
-    background: `conic-gradient(from 180deg, hsl(${hue} 100% 62%) ${pct}%, rgba(255,255,255,0.12) ${pct}% 100%)`,
-  };
-}
-
-function RaceCarRig({ player }: { player?: Player }) {
-  const tyres = player?.tyres ?? {};
-  const tyreWear = tyres.wearPct ?? [0, 0, 0, 0];
-  const tyrePressure = tyres.pressurePsi ?? [0, 0, 0, 0];
-  const tyreTemp = tyres.surfaceTempC ?? [0, 0, 0, 0];
-  const brakeTemp = tyres.brakeTempC ?? [0, 0, 0, 0];
-  const wingDamage = {
-    frontLeft: player?.damage?.frontLeftWingDamage ?? 0,
-    frontRight: player?.damage?.frontRightWingDamage ?? 0,
-    rear: player?.damage?.rearWingDamage ?? 0,
-    floor: player?.damage?.floorDamage ?? 0,
-    diffuser: player?.damage?.diffuserDamage ?? 0,
-    sidepod: player?.damage?.sidepodDamage ?? 0,
-  };
-  const tyreHealth = clamp(100 - safeAverage(tyreWear), 0, 100);
-  const wingHealth = clamp(100 - safeAverage(Object.values(wingDamage)), 0, 100);
-  const tyreHeat = Math.max(safeAverage(tyreTemp), safeAverage(brakeTemp));
-  const pressureAverage = safeAverage(tyrePressure);
-  const wheelMeters = [
-    { label: "FL", value: clamp(100 - (tyreWear[2] ?? 0), 0, 100), color: "#60f6a3" },
-    { label: "FR", value: clamp(100 - (tyreWear[3] ?? 0), 0, 100), color: "#60f6a3" },
-    { label: "RL", value: clamp(100 - (tyreWear[0] ?? 0), 0, 100), color: "#60f6a3" },
-    { label: "RR", value: clamp(100 - (tyreWear[1] ?? 0), 0, 100), color: "#60f6a3" },
-  ];
-
-  return (
-    <div className="car-health-card">
-      <div className="car-header-strip">
-        <span className="car-number">NUM {player?.driverNumber ?? 0}</span>
-        <span className="car-status-pill">{wingHealth > 80 && tyreHealth > 70 ? "SYSTEM OK" : "CHECK"}</span>
-      </div>
-      <div className="car-rig-wrapper">
-        {wheelMeters.map((wheel, index) => (
-          <div key={`wheel-${wheel.label}`} className={`wheel-meter wheel-${index + 1}`}>
-            <div className="ring" style={ringStyle(wheel.value, false)}>
-              <span>{Math.round(wheel.value)}%</span>
-            </div>
-            <small>{wheel.label}</small>
-          </div>
-        ))}
-        <svg className="race-car-svg" viewBox="0 0 720 260" role="img" aria-label="Race car health diagram">
-          <defs>
-            <linearGradient id="carBodyGlow" x1="0%" x2="100%" y1="0%" y2="0%">
-              <stop offset="0%" stopColor="rgba(96, 246, 163, 0.85)" />
-              <stop offset="100%" stopColor="rgba(93, 192, 255, 0.65)" />
-            </linearGradient>
-          </defs>
-          <g className="car-silhouette">
-            <path d="M85 155 L165 110 L285 120 L340 96 L470 100 L570 130 L655 150 L652 176 L620 184 L590 198 L532 192 L420 206 L320 206 L190 198 L126 180 L94 170 Z" fill="rgba(18, 28, 38, 0.9)" stroke="rgba(96,246,163,0.95)" strokeWidth="2" />
-            <path d="M155 118 L180 100 L245 98 L270 109 L220 124 L155 118 Z" fill="rgba(96,246,163,0.12)" stroke="rgba(96,246,163,0.8)" strokeWidth="2" />
-            <path d="M485 102 L548 108 L578 126 L542 145 L498 136 L470 123 Z" fill="rgba(146, 200, 255, 0.12)" stroke="rgba(96,246,163,0.7)" strokeWidth="2" />
-            <path d="M215 118 L275 118 L283 174 L210 174 Z" fill="rgba(26, 44, 55, 0.85)" stroke="rgba(96,246,163,0.75)" strokeWidth="2" />
-            <circle cx="185" cy="186" r="38" fill="rgba(12, 18, 22, 0.9)" stroke="rgba(96,246,163,0.85)" strokeWidth="2" />
-            <circle cx="520" cy="186" r="38" fill="rgba(12, 18, 22, 0.9)" stroke="rgba(96,246,163,0.85)" strokeWidth="2" />
-            <circle cx="58" cy="184" r="25" fill="rgba(12, 18, 22, 0.9)" stroke="rgba(96,246,163,0.85)" strokeWidth="2" />
-            <circle cx="650" cy="184" r="25" fill="rgba(12, 18, 22, 0.9)" stroke="rgba(96,246,163,0.85)" strokeWidth="2" />
-            <path d="M201 92 L220 60 L270 62 L282 100" fill="none" stroke="rgba(96,246,163,0.8)" strokeWidth="2" />
-            <path d="M496 94 L520 60 L565 60 L581 108" fill="none" stroke="rgba(96,246,163,0.8)" strokeWidth="2" />
-            <path d="M238 146 L247 188" stroke="rgba(96,246,163,0.75)" strokeWidth="2" />
-            <path d="M490 146 L481 188" stroke="rgba(96,246,163,0.75)" strokeWidth="2" />
-            <path d="M112 162 L136 146" stroke="rgba(96,246,163,0.6)" strokeWidth="2" />
-            <path d="M590 162 L614 146" stroke="rgba(96,246,163,0.6)" strokeWidth="2" />
-          </g>
-        </svg>
-      </div>
-      <div className="car-metric-grid">
-        <div className="car-metric"><span>TYRE</span><strong>{Math.round(tyreHealth)}%</strong></div>
-        <div className="car-metric"><span>HEAT</span><strong>{Math.round(tyreHeat)}°C</strong></div>
-        <div className="car-metric"><span>PRESS</span><strong>{pressureAverage > 0 ? `${pressureAverage.toFixed(1)} psi` : "—"}</strong></div>
-        <div className="car-metric"><span>WING</span><strong>{Math.round(wingHealth)}%</strong></div>
-      </div>
-      <div className="wing-damage-grid">
-        <div><span>FL wing</span><strong>{isNumber(player?.damage?.frontLeftWingDamage) ? `${Math.round(player.damage!.frontLeftWingDamage!)}%` : "—"}</strong></div>
-        <div><span>FR wing</span><strong>{isNumber(player?.damage?.frontRightWingDamage) ? `${Math.round(player.damage!.frontRightWingDamage!)}%` : "—"}</strong></div>
-        <div><span>Rear</span><strong>{isNumber(player?.damage?.rearWingDamage) ? `${Math.round(player.damage!.rearWingDamage!)}%` : "—"}</strong></div>
-        <div><span>Floor</span><strong>{isNumber(player?.damage?.floorDamage) ? `${Math.round(player.damage!.floorDamage!)}%` : "—"}</strong></div>
-      </div>
-    </div>
-  );
 }
 
 function PanelHeading({ eyebrow, title, trailing }: { eyebrow: string; title: string; trailing?: React.ReactNode }) {
@@ -592,9 +512,9 @@ function MiniChart({ points, mode }: { points: PlotPoint[]; mode: "speed" | "ped
   const innerHeight = height - padding.top - padding.bottom;
   const x = (index: number) => padding.left + (points.length <= 1 ? 0 : (index / (points.length - 1)) * innerWidth);
   const y = (value: number) => padding.top + innerHeight - Math.max(0, Math.min(value, maxY)) / maxY * innerHeight;
-  const speedPath = points.map((point, index) => `${index ? "L" : "M"}${x(index).toFixed(1)} ${y(point.speed).toFixed(1)}`).join(" ");
-  const throttlePath = points.map((point, index) => `${index ? "L" : "M"}${x(index).toFixed(1)} ${y(point.throttle * 100).toFixed(1)}`).join(" ");
-  const brakePath = points.map((point, index) => `${index ? "L" : "M"}${x(index).toFixed(1)} ${y(point.brake * 100).toFixed(1)}`).join(" ");
+  const speedPath = points.map((point, index) => `${index && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.speed).toFixed(1)}`).join(" ");
+  const throttlePath = points.map((point, index) => `${index && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.throttle * 100).toFixed(1)}`).join(" ");
+  const brakePath = points.map((point, index) => `${index && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.brake * 100).toFixed(1)}`).join(" ");
   const gridValues = mode === "speed" ? [0, maxY / 2, maxY] : [0, 50, 100];
 
   return (
@@ -619,75 +539,6 @@ function MiniChart({ points, mode }: { points: PlotPoint[]; mode: "speed" | "ped
   );
 }
 
-function LapComparisonGraph({
-  selected,
-  compareLaps,
-  reference,
-}: {
-  selected: LapSummary | null;
-  compareLaps: LapSummary[];
-  reference: LapSummary | null;
-}) {
-  const width = 760;
-  const height = 220;
-  const padding = { top: 20, right: 20, bottom: 28, left: 34 };
-  const selectedSamples = selected?.samples ?? [];
-  const samplesToCompare = compareLaps
-    .filter((lap) => Array.isArray(lap.samples) && lap.samples.length > 0)
-    .slice(-8);
-
-  const buildSeries = (samples: LapSample[], key: "throttle" | "brake") => {
-    if (!samples.length) return "";
-    const range = 100;
-    const maxDistance = Math.max(...samples.map((sample) => Number(sample.distance ?? 0)), 1);
-    return samples
-      .map((sample) => {
-        const x = padding.left + (Number(sample.distance ?? 0) / maxDistance) * (width - padding.left - padding.right);
-        const y = padding.top + (1 - (Number(sample[key] ?? 0) / range)) * (height - padding.top - padding.bottom);
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(" ");
-  };
-
-  const selectedThrottle = buildSeries(selectedSamples, "throttle");
-  const selectedBrake = buildSeries(selectedSamples, "brake");
-  const compareThrottle = samplesToCompare.map((lap) => ({
-    color: "series-reference",
-    points: buildSeries(lap.samples ?? [], "throttle"),
-  }));
-  const compareBrake = samplesToCompare.map((lap) => ({
-    color: "series-reference-brake",
-    points: buildSeries(lap.samples ?? [], "brake"),
-  }));
-  const empty = !selectedThrottle && !selectedBrake && compareThrottle.every((lap) => !lap.points) && compareBrake.every((lap) => !lap.points);
-
-  return (
-    <svg className="lap-graph" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Throttle and brake comparison graph">
-      {[0, 25, 50, 75, 100].map((value) => {
-        const y = padding.top + (1 - value / 100) * (height - padding.top - padding.bottom);
-        return (
-          <g key={`grid-${value}`}>
-            <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} className="chart-grid" />
-            <text x={padding.left - 8} y={y + 4} textAnchor="end" className="chart-axis-label">{value}%</text>
-          </g>
-        );
-      })}
-      <line x1={padding.left} x2={width - padding.right} y1={height - padding.bottom} y2={height - padding.bottom} className="chart-grid" />
-      <line x1={padding.left} x2={padding.left} y1={padding.top} y2={height - padding.bottom} className="chart-grid" />
-      {compareThrottle.map((lap, index) => lap.points && <polyline key={`compare-throttle-${index}`} points={lap.points} className={lap.color} />)}
-      {compareBrake.map((lap, index) => lap.points && <polyline key={`compare-brake-${index}`} points={lap.points} className={lap.color} />)}
-      {selectedThrottle && <polyline points={selectedThrottle} className="series-throttle" />}
-      {selectedBrake && <polyline points={selectedBrake} className="series-brake" />}
-      {reference?.samples?.length && <polyline points={buildSeries(reference.samples, "throttle")} className="series-reference" />}
-      {reference?.samples?.length && <polyline points={buildSeries(reference.samples, "brake")} className="series-reference-brake" />}
-      {empty && <text x={width / 2} y={height / 2} textAnchor="middle" className="chart-empty">NO SAMPLE TRACE AVAILABLE</text>}
-      <text x={padding.left} y={height - 4} className="chart-axis-label">DISTANCE</text>
-      <text x={width - padding.right} y={height - 4} textAnchor="end" className="chart-axis-label">0→100%</text>
-      <text x={width / 2} y={12} textAnchor="middle" className="chart-axis-label">THROTTLE / BRAKE COMPARISON</text>
-    </svg>
-  );
-}
-
 function App() {
   const { snapshot, state, lastMessageAt } = useTelemetry();
   const [plot, setPlot] = useState<PlotPoint[]>([]);
@@ -695,7 +546,6 @@ function App() {
   const [trackCatalog, setTrackCatalog] = useState<Record<number, TrackOutline>>({});
   const [trackOutline, setTrackOutline] = useState<TrackOutline | null>(null);
   const [lightTheme, setLightTheme] = useState(false);
-  const [storedLaps, setStoredLaps] = useState<LapSummary[]>([]);
   const [selectedLap, setSelectedLap] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<"live" | "laps">("live");
   const [coachOpen, setCoachOpen] = useState(false);
@@ -706,15 +556,43 @@ function App() {
   const [hasApiKey, setHasApiKey] = useState(false);
   const [now, setNow] = useState(Date.now());
   const lastSample = useRef<string>("");
-  const sessionIdRef = useRef<number | undefined>(undefined);
-  const lapNumberRef = useRef<number | null>(null);
-  
+  const lastGameTime = useRef<number | null>(null);
+  const traceGap = useRef(false);
+  const socketConnected = state === "live" && lastMessageAt !== null && now - lastMessageAt < 2_000;
+
   useEffect(() => {
     fetch("/api/coach/status")
       .then((r) => r.json())
       .then((d) => setHasApiKey(Boolean(d.hasApiKey)))
       .catch(() => {});
   }, []);
+
+  const saveApiKey = async () => {
+    if (!apiKeyInput.trim()) return;
+    try {
+      const res = await fetch("/api/coach/key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: apiKeyInput.trim() }),
+      });
+      if (res.ok) {
+        setHasApiKey(true);
+        setKeySaveMsg("Saved! Rerun analysis to get Gemini insights.");
+        setApiKeyInput("");
+        setTimeout(() => setKeySaveMsg(""), 4000);
+      }
+    } catch (e) {
+      setKeySaveMsg("Failed to save key");
+    }
+  };
+  const stats = snapshot?.stats;
+  const telemetryFresh = snapshot?.freshness?.telemetry?.state === "fresh";
+  const paused = socketConnected && snapshot?.gamePaused === true && snapshot?.freshness?.session?.state === "fresh";
+  const frozen = !socketConnected || paused || !telemetryFresh;
+  const feedLabel = !socketConnected ? "DISCONNECTED" : paused ? "PAUSED" : !telemetryFresh ? (snapshot?.telemetrySample ? "STALE" : "WAITING FOR UDP") : "LIVE DATA";
+  const shown = frozen ? snapshot?.retainedLive ?? snapshot : snapshot;
+  const player = shown?.player;
+  const session = shown?.session;
 
   const runCoachAnalysis = async () => {
     setCoachLoading(true);
@@ -737,86 +615,18 @@ function App() {
       setCoachLoading(false);
     }
   };
-
-  const saveApiKey = async () => {
-    if (!apiKeyInput.trim()) return;
-    try {
-      const res = await fetch("/api/coach/key", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: apiKeyInput.trim() }),
-      });
-      if (res.ok) {
-        setHasApiKey(true);
-        setKeySaveMsg("Saved! Rerun analysis to get Gemini insights.");
-        setApiKeyInput("");
-        setTimeout(() => setKeySaveMsg(""), 4000);
-      }
-    } catch (e) {
-      setKeySaveMsg("Failed to save key");
-    }
-  };
-
-  const player = snapshot?.player;
-  const session = snapshot?.session;
-  const stats = snapshot?.stats;
-  const cars = Array.isArray(snapshot?.cars) ? snapshot.cars : [];
-  const lapHistory = Array.isArray(snapshot?.laps) && snapshot.laps.length > 0 ? snapshot.laps : storedLaps;
+  const cars = Array.isArray(shown?.cars) ? shown.cars : [];
+  const lapHistory = Array.isArray(snapshot?.laps) ? snapshot.laps : [];
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const saved = window.sessionStorage.getItem("krem-lap-history");
-      if (!saved) return;
-      const parsed = JSON.parse(saved) as LapSummary[];
-      if (Array.isArray(parsed)) {
-        setStoredLaps(parsed);
-      }
-    } catch {
-      // Ignore malformed cached lap data; the live feed will rebuild it.
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !Array.isArray(snapshot?.laps) || snapshot.laps.length === 0) return;
-    setStoredLaps((current) => {
-      const merged = [...current, ...snapshot.laps!];
-      const unique = new Map<number, LapSummary>();
-      for (const lap of merged) {
-        const key = Number(lap.lap ?? -1);
-        if (key < 0) continue;
-        unique.set(key, lap);
-      }
-      const next = Array.from(unique.values()).slice(-10);
-      window.sessionStorage.setItem("krem-lap-history", JSON.stringify(next));
-      return next;
-    });
-  }, [snapshot?.laps]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const currentSessionId = snapshot?.session?.uid;
-    if (currentSessionId !== undefined && currentSessionId !== null) {
-      const previousSessionId = sessionIdRef.current;
-      if (previousSessionId !== undefined && previousSessionId !== currentSessionId) {
-        setStoredLaps([]);
-        setSelectedLap(null);
-        window.sessionStorage.removeItem("krem-lap-history");
-      }
-      sessionIdRef.current = currentSessionId;
-    }
-  }, [snapshot?.session?.uid]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const currentLapNum = isNumber(player?.lapNum) ? player.lapNum : null;
-    if (currentLapNum !== null && lapNumberRef.current !== null && currentLapNum < lapNumberRef.current) {
-      setStoredLaps([]);
-      setSelectedLap(null);
-      window.sessionStorage.removeItem("krem-lap-history");
-    }
-    lapNumberRef.current = currentLapNum;
-  }, [player?.lapNum]);
+    setSelectedLap(null);
+    setPlot([]);
+    setMapHistory([]);
+    lastSample.current = "";
+    lastGameTime.current = null;
+    traceGap.current = false;
+    window.sessionStorage.removeItem("krem-lap-history");
+  }, [snapshot?.liveStreamId, snapshot?.recorder?.epoch, snapshot?.recorder?.sessionUid]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -868,29 +678,35 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const trackId = snapshot?.session?.trackId;
+    const trackId = session?.trackId;
     if (trackId === undefined || trackId === null || trackId < 0) {
       setTrackOutline(null);
       return;
     }
     setTrackOutline(trackCatalog[trackId] ?? null);
-  }, [snapshot?.session?.trackId, trackCatalog]);
+  }, [session?.trackId, trackCatalog]);
 
   useEffect(() => {
-    if (!player) return;
-    const marker = `${snapshot?.frameCount ?? ""}:${player.lapDist ?? ""}:${player.speed ?? ""}:${lastMessageAt ?? ""}`;
+    if (frozen) { traceGap.current = true; return; }
+    if (!player || !snapshot?.telemetrySample) return;
+    const { id: marker, sessionTime } = snapshot.telemetrySample;
     if (marker === lastSample.current) return;
     lastSample.current = marker;
+    // WebSocket refreshes and repeated paused frames are not driving samples.
+    if (lastGameTime.current !== null && sessionTime <= lastGameTime.current) return;
+    lastGameTime.current = sessionTime;
 
-    if (isNumber(player.speed) || isNumber(player.throttle) || isNumber(player.brake)) {
+    if (isNumber(player.speed) && isNumber(player.throttle) && isNumber(player.brake)) {
       const point: PlotPoint = {
         at: Date.now(),
+        gapBefore: traceGap.current,
         distance: isNumber(player.lapDist) ? player.lapDist : 0,
         speed: Math.max(0, player.speed ?? 0),
         throttle: Math.max(0, Math.min(1, player.throttle ?? 0)),
         brake: Math.max(0, Math.min(1, player.brake ?? 0)),
       };
       setPlot((current) => [...current.slice(-(HISTORY_LIMIT - 1)), point]);
+      traceGap.current = false;
     }
 
     const playerCar = cars.find((car) => car.isPlayer)
@@ -901,7 +717,7 @@ function App() {
         { x: playerCar.worldX!, z: playerCar.worldZ! },
       ]);
     }
-  }, [snapshot, player, cars, lastMessageAt]);
+  }, [snapshot, player, cars, frozen]);
 
   const latestEvent = snapshot?.events?.at(-1);
   const eventText = typeof latestEvent === "string"
@@ -909,17 +725,10 @@ function App() {
     : latestEvent?.code
       ? `${latestEvent.code}${isNumber(latestEvent.time) ? ` · ${latestEvent.time.toFixed(1)}s` : ""}`
       : undefined;
-  const socketConnected = state === "live" && lastMessageAt !== null && now - lastMessageAt < 5_000;
-  const connected = socketConnected && stats?.connected === true;
+  const connected = socketConnected && !frozen && stats?.connected === true;
   const currentSector = isNumber(player?.sector) ? Math.min(3, Math.max(1, player.sector + 1)) : null;
   const distance = isNumber(player?.lapDist) ? player.lapDist : null;
   const latestLap = lapHistory.length > 0 ? lapHistory[lapHistory.length - 1] : null;
-  const selectedLapSummary = lapHistory.find((lap) => Number(lap.lap ?? -1) === selectedLap)
-    ?? latestLap ?? null;
-  const allComparedLaps = lapHistory.filter((lap) => Number(lap.lap ?? -1) !== Number(selectedLapSummary?.lap ?? -1));
-  const lapDeltaMs = latestLap && selectedLapSummary && isNumber(latestLap.lapTimeMs) && isNumber(selectedLapSummary.lapTimeMs)
-    ? latestLap.lapTimeMs - selectedLapSummary.lapTimeMs
-    : null;
   useEffect(() => {
     if (lapHistory.length === 0) return;
     const latestLapNumber = Number(latestLap?.lap ?? -1);
@@ -946,13 +755,13 @@ function App() {
           </button>
           <div className={`connection ${connected ? "is-live" : ""}`}>
             <span className="connection-dot" />
-            <span>{connected ? "LIVE DATA" : socketConnected ? "WAITING FOR UDP" : state === "connecting" ? "CONNECTING" : "RECONNECTING"}</span>
+            <span>{feedLabel}</span>
           </div>
         </div>
       </header>
 
       <div className="status-strip">
-        <div className="status-item"><span className="status-label">FEED</span><strong className={connected ? "text-green" : "text-amber"}>{connected ? "RECEIVING" : socketConnected ? "WAITING FOR UDP" : "OFFLINE"}</strong></div>
+        <div className="status-item"><span className="status-label">FEED</span><strong className={connected ? "text-green" : "text-amber"}>{feedLabel}</strong></div>
         <div className="status-item"><span className="status-label">PACKETS / SEC</span><strong>{displayNumber(stats?.packetsPerSecond)}</strong></div>
         <div className="status-item"><span className="status-label">FRAME GAPS</span><strong className={(stats?.frameGaps ?? 0) > 0 ? "text-amber" : ""}>{displayNumber(stats?.frameGaps)}</strong></div>
         <div className="status-item status-wide"><span className="status-label">FORMAT</span><strong>F1 25 · 2025</strong></div>
@@ -967,10 +776,10 @@ function App() {
         <div className="connection-banner" role="status">
           <span className="banner-icon">!</span>
           <div>
-            <strong>{socketConnected ? "Waiting for F1 25 telemetry" : "Dashboard connection unavailable"}</strong>
-            <span>{socketConnected
-              ? "KREM is connected. Configure F1 25 to send UDP telemetry using format 2025 to port 20777."
-              : `Attempting to reconnect to ${socketAddress()}. Check that KREM is running.`}</span>
+            <strong>{paused ? "Game paused — readings and traces frozen" : snapshot?.telemetrySample ? "Live feed unavailable — showing last received readings" : "Waiting for F1 25 telemetry"}</strong>
+            <span>{paused ? "Inspect the existing traces at any point. Updates continue when the game resumes."
+              : snapshot?.telemetrySample ? "Retained values are not live. No new graph samples are added until telemetry resumes."
+              : "Configure F1 25 to send UDP telemetry using format 2025 to port 20777."}</span>
           </div>
         </div>
       )}
@@ -1006,7 +815,7 @@ function App() {
             <div className="timing-details">
               <div><span>LAP DISTANCE</span><strong>{distance === null ? "—" : `${Math.max(0, distance).toFixed(0)} m`}</strong></div>
               <div><span>RACE LAPS</span><strong>{isNumber(session?.totalLaps) ? `${isNumber(player?.lapNum) ? player.lapNum : "—"} / ${session.totalLaps}` : "—"}</strong></div>
-              <div><span>LAP INVALID</span><strong className={player?.invalid ? "text-red" : "text-green"}>{player?.invalid ? "YES" : player ? "NO" : "—"}</strong></div>
+              <div><span>LAP INVALID</span><strong className={player?.invalid == null ? "" : player.invalid ? "text-red" : "text-green"}>{player?.invalid == null ? "—" : player.invalid ? "YES" : "NO"}</strong></div>
             </div>
             <div className="timing-session">
               <div><span>TRACK</span><strong>{session?.trackName || "—"}</strong></div>
@@ -1017,7 +826,7 @@ function App() {
           </article>
 
           <article className="panel panel-charts">
-            <PanelHeading eyebrow="03 / DRIVER INPUT" title="Telemetry traces" trailing={<span className="window-label">ROLLING · {plot.length} SAMPLES</span>} />
+            <PanelHeading eyebrow="03 / DRIVER INPUT" title="Telemetry traces" trailing={<span className="window-label">{frozen ? feedLabel : "ROLLING"} · {plot.length} SAMPLES</span>} />
             <div className="chart-legend">
               <span><i className="legend-speed" />SPEED <b>{displayNumber(player?.speed)} KM/H</b></span>
               <span><i className="legend-throttle" />THROTTLE <b>{percent(player?.throttle)}</b></span>
@@ -1036,7 +845,7 @@ function App() {
 
           <article className="panel panel-car-health">
             <PanelHeading eyebrow="03 / CHASSIS" title="Car health" trailing={<span className="panel-chip">TYRES · WINGS</span>} />
-            <RaceCarRig player={player} />
+            <CarStatusPanel player={player} freshness={snapshot?.freshness} online={socketConnected} retained={frozen} paused={paused} />
           </article>
 
           <article className="panel panel-values">
@@ -1050,8 +859,8 @@ function App() {
               <Stat label="SUGGESTED GEAR" value={displayNumber(player?.suggestedGear)} />
               <Stat label="LATERAL G" value={displayNumber(player?.gLat, 2)} />
               <Stat label="LONGITUDINAL G" value={displayNumber(player?.gLong, 2)} />
-              <Stat label="DRS" value={player?.drs ? "OPEN" : player ? "CLOSED" : "—"} />
-              <Stat label="DRS AVAILABLE" value={player ? (player.drsAllowed ? "YES" : "NO") : "—"} />
+              <Stat label="DRS" value={player?.drs == null ? "—" : player.drs ? "OPEN" : "CLOSED"} />
+              <Stat label="DRS AVAILABLE" value={player?.drsAllowed == null ? "—" : player.drsAllowed ? "YES" : "NO"} />
               <Stat label="ERS STORE" value={displayNumber(player?.ersStore, 2)} unit="MJ" />
               <Stat label="ERS MODE" value={displayNumber(player?.ersMode)} />
               <Stat label="FUEL" value={displayNumber(player?.fuel, 1)} unit="KG" />
@@ -1060,7 +869,7 @@ function App() {
               <Stat label="TYRE AGE" value={displayNumber(player?.tyreAge)} unit="LAPS" />
             </div>
             <div className="values-footer">
-              <div className="driving-state"><span className="state-dot" /><span>{player ? (player.brake ?? 0) >= 0.02 ? "BRAKING" : (player.throttle ?? 0) >= 0.98 ? "FULL THROTTLE" : (player.throttle ?? 0) > 0.02 ? "ACCELERATING" : "COASTING" : "AWAITING TELEMETRY"}</span></div>
+              <div className="driving-state"><span className="state-dot" /><span>{isNumber(player?.brake) && isNumber(player?.throttle) ? (player.brake ?? 0) >= 0.02 ? "BRAKING" : (player.throttle ?? 0) >= 0.98 ? "FULL THROTTLE" : (player.throttle ?? 0) > 0.02 ? "ACCELERATING" : "COASTING" : "AWAITING TELEMETRY"}</span></div>
               <div className="coach-action">
                 <button
                   className="coach-button active-coach"
@@ -1077,77 +886,7 @@ function App() {
           </article>
         </section>
       ) : (
-        <section className="lap-tab-panel">
-          <div className="lap-layout">
-            <article className="panel lap-main-panel">
-              <PanelHeading eyebrow="LAP ANALYSIS" title="Selected lap compare" trailing={<span className="panel-chip">{lapHistory.length} saved</span>} />
-              <div className="lap-selection-bar">
-                <label htmlFor="lap-select">Selected lap</label>
-                <select id="lap-select" value={selectedLapSummary?.lap ?? ""} onChange={(event) => setSelectedLap(Number(event.target.value) || null)}>
-                  {lapHistory.map((lap) => (
-                    <option key={`lap-option-${lap.lap ?? "unknown"}`} value={Number(lap.lap ?? 0)}>
-                      Lap {lap.lap ?? "—"}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="lap-compare-grid">
-                <div className="lap-card lap-card-current">
-                  <span className="lap-card-label">SELECTED</span>
-                  <strong>Lap {selectedLapSummary?.lap ?? "—"}</strong>
-                  <div className="lap-card-row"><span>TIME</span><b>{formatTime(selectedLapSummary?.lapTimeMs)}</b></div>
-                  <div className="lap-card-row"><span>AVG SPEED</span><b>{displayNumber(selectedLapSummary?.avgSpeedKph, 1)} km/h</b></div>
-                  <div className="lap-card-row"><span>TOP SPEED</span><b>{displayNumber(selectedLapSummary?.maxSpeedKph, 1)} km/h</b></div>
-                </div>
-                <div className="lap-card">
-                  <span className="lap-card-label">BENCHMARK</span>
-                  <strong>{latestLap ? `Lap ${latestLap.lap}` : "—"}</strong>
-                  <div className="lap-card-row"><span>DIFF</span><b className={lapDeltaMs !== null && lapDeltaMs <= 0 ? "text-green" : "text-amber"}>{lapDeltaMs === null ? "—" : `${lapDeltaMs > 0 ? "+" : ""}${lapDeltaMs} ms`}</b></div>
-                  <div className="lap-card-row"><span>AVG THROTTLE</span><b>{displayNumber(selectedLapSummary?.avgThrottle, 1, "%")}</b></div>
-                  <div className="lap-card-row"><span>AVG BRAKE</span><b>{displayNumber(selectedLapSummary?.avgBrake, 1, "%")}</b></div>
-                </div>
-              </div>
-              <div className="lap-table">
-                <div className="lap-table-head">
-                  <span>Lap</span>
-                  <span>Time</span>
-                  <span>Delta</span>
-                  <span>Avg speed</span>
-                </div>
-                {allComparedLaps.length === 0 && <div className="lap-table-empty">No other laps to compare against the selected lap.</div>}
-                {allComparedLaps.slice().reverse().map((lap) => {
-                  const deltaMs = selectedLapSummary && isNumber(selectedLapSummary.lapTimeMs) && isNumber(lap.lapTimeMs)
-                    ? lap.lapTimeMs - selectedLapSummary.lapTimeMs
-                    : null;
-                  return (
-                    <div key={`lap-compare-${lap.lap ?? "unknown"}`} className="lap-table-row lap-table-row-clickable" onClick={() => setSelectedLap(Number(lap.lap ?? 0) || null)}>
-                      <span>{lap.lap ?? "—"}</span>
-                      <span>{formatTime(lap.lapTimeMs)}</span>
-                      <span className={deltaMs !== null && deltaMs <= 0 ? "text-green" : "text-amber"}>{deltaMs === null ? "—" : `${deltaMs > 0 ? "+" : ""}${deltaMs} ms`}</span>
-                      <span>{displayNumber(lap.avgSpeedKph, 1)} km/h</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="session-store-note">Stored in browser session storage while the dashboard remains open.</div>
-            </article>
-
-            <article className="panel lap-graph-panel">
-              <PanelHeading eyebrow="GRAPH" title="Throttle / brake trace" trailing={<span className="panel-chip">selected vs reference</span>} />
-              <div className="lap-graph-meta">
-                <span>Selected {selectedLapSummary ? `Lap ${selectedLapSummary.lap}` : "—"}</span>
-                <span>Reference {latestLap ? `Lap ${latestLap.lap}` : "—"}</span>
-              </div>
-              <LapComparisonGraph selected={selectedLapSummary} compareLaps={allComparedLaps} reference={latestLap} />
-              <div className="lap-summary-row">
-                <div><span>Selected throttle</span><strong>{displayNumber(selectedLapSummary?.avgThrottle, 1, "%")}</strong></div>
-                <div><span>Selected brake</span><strong>{displayNumber(selectedLapSummary?.avgBrake, 1, "%")}</strong></div>
-                <div><span>Reference throttle</span><strong>{displayNumber(latestLap?.avgThrottle, 1, "%")}</strong></div>
-                <div><span>Reference brake</span><strong>{displayNumber(latestLap?.avgBrake, 1, "%")}</strong></div>
-              </div>
-            </article>
-          </div>
-        </section>
+        <LapComparePanel />
       )}
 
       <footer className="footer">

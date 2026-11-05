@@ -6,7 +6,7 @@
 - **Name:** KREM
 - **Purpose:** Standalone real-time telemetry dashboard focused on F1 25
 - **Current stack:** Python asyncio/FastAPI backend · NumPy decoder · React + TypeScript + Vite frontend · WebSocket
-- **Planned AI provider:** Gemini API via Google AI Studio; coaching is not implemented yet
+- **AI provider:** Gemini API via Google AI Studio; coaching runs server-side and keeps the key out of the browser
 - **UDP Format:** 2025 only (`m_packetFormat == 2025 && m_gameYear == 25`)
 - **Source Plan:** [`F1_25_Telemetry_Dashboard_Plan.md`](file:///Users/dp/Desktop/F1/KREM/F1_25_Telemetry_Dashboard_Plan.md)
 - **Protocol reference:** EA SPORTS F1 25 UDP Specification (see source note in the plan). The local third-party struct transcription is intentionally not tracked.
@@ -35,10 +35,10 @@ Lap persistence, reference traces, calibrated track maps, and AI coaching remain
 | **M0** | Capture tool + verification tests V0–V15 | 🔨 In Progress — requires live game captures |
 | **M1** | Ingest, guard, decode, recorder, replay | 🔨 Core implemented; capture-based exit check pending |
 | M2 | Panel 1 map + calibration + learned-line fallback | 🔨 Live world-position view; calibration/map overlays pending |
-| M3 | Lap segmenter, resampler, DuckDB, reference store | ⬜ Not Started |
+| M3 | Lap segmenter, resampler, DuckDB, reference store | ✅ Implemented; live-game validation pending |
 | M4 | Panel 2 sectors/colours | 🔨 Live lap/sector display; reference-based colours pending |
 | M5 | Panel 3 graphs, Panel 4 values/classifier | 🔨 Live rolling charts and values; reference/classifier work pending |
-| M6 | AI coach + eval harness (Gemini / Google AI Studio) | ⬜ Not Started |
+| M6 | AI coach + eval harness (Gemini / Google AI Studio) | ✅ Coach and benchmark APIs implemented; live-game validation pending |
 | M7 | Packaging, settings, attribution screen | 🔨 Python package and frontend build work; installer/settings pending |
 | M8 | Track-edge estimation (stretch) | ⬜ Not Started |
 
@@ -139,3 +139,83 @@ KREM/
 |---|---|---|
 | 2026-11-03 03:00 | `AGENTS.md` | Initial creation |
 | 2026-11-03 03:45 | Backend, `frontend/`, `tests/`, `README.md`, `pyproject.toml`, plan, `.gitignore`, `AGENTS.md` | Built and integrated the first live dashboard path; documented Gemini / Google AI Studio; fixed and verified recorder replay/session decoding; aligned the UI with the API's actual field names and feed status |
+
+## Step 1 update — 2026-11-04
+
+- Fixed historical pedal chart scaling and summary percentage formatting.
+- Added monotonic per-packet freshness and null masking in live snapshots.
+- Reset cached player/session data on UID or player-index changes; fixed the
+  telemetry handler's invalid-player-index path.
+- Replaced healthy-looking missing values, exposed telemetry/damage freshness,
+  separated tyre surface/inner/brake temperature averages, and masked live
+  values after WebSocket loss. Car silhouette is temporarily neutral.
+- Made development fallback pedal formatting accept missing values.
+- Added `tests/test_live_freshness.py` (6 synthetic tests).
+- Validation: 87 backend tests passed on Python 3.12; TypeScript/Vite production
+  build passed. Windows replacement build and live F1 25 validation pending.
+- Top-down SVG/modes and reliable lap recorder/persistence/comparison remain
+  the next steps; this update does not implement them.
+
+## Step 2 update — 2026-11-04
+
+- Extracted the car panel into `frontend/src/components/CarStatusPanel.tsx`
+  and scoped CSS. The main dashboard retains the existing telemetry stream.
+- Added top-down SVG, correct wheel mapping, Wear/Temperature/Pressure/Damage
+  buttons, per-wheel surface/inner/brake temperatures and pressure.
+- Added independent wing/floor/diffuser/sidepod damage colours, explicit
+  percentage legend, grey unavailable parts, and six damage detail rows.
+- The single sidepod packet reading colours both sidepods; this is labelled.
+- No new runtime dependencies, polling endpoints or backend changes.
+- Step 1 Windows validation: user confirmed 87 tests and production build pass.
+- Live F1 25 validation remains pending.
+- Step 2 validation: TypeScript/Vite build passed. Server-rendered component
+  checks passed for wheel mapping, independent damage colours, four controls,
+  and missing/stale/offline masking. Browser interaction/layout tests were
+  blocked by a failed Chromium download; user visual checks remain pending.
+
+## Step 3 update — 2026-11-04
+
+- Added bounded exact-frame `LapRecorder`; removed latest-value lap sampling
+  from LiveState. Ingest and snapshot draining run under LiveState's lock.
+- Stored elapsed time, distance, normalized inputs, speed, frame/session IDs,
+  explicit missing samples and gap markers. Session UIDs in records are strings.
+- Preserved previous-lap sectors at transitions; incorporated player history
+  timings/validity. Added invalid/partial flags and quality reasons.
+- Added conservative full-timeline invalidation for flashbacks/rewinds, and
+  resets for session/player changes. No guessed time for skipped boundaries.
+- Removed stale browser lap-cache merging; existing UI labels record quality
+  and uses SVG path breaks for missing samples. Car panel remains unchanged.
+- Updated the legacy lap test with real advancing frame IDs and zeroed new-lap
+  splits; it now also checks that previous sector times survive the boundary.
+- Added 19 recorder tests: exact pairing, reordering/duplicates, mismatches,
+  missing/invalid samples, partial/pit laps, gaps, sectors/history, flashbacks,
+  resets, bounds, age flush and LiveState integration.
+- Validation: 106 backend tests passed (Python 3.12); TypeScript/Vite build
+  passed. Windows and live-game checks for this step remain pending.
+- Remaining: DuckDB persistence and trace APIs, distance comparison API,
+  synchronized four-chart comparison UI, end-to-end capture/replay validation.
+
+## PR feedback update — 2026-11-05: retain paused live telemetry
+
+- Based on the uploaded KREME (5) snapshot, including persistence, comparison
+  APIs, comparison UI and the all-metrics car panel. Those features preserved.
+- Exposed explicit Session gamePaused flag. Freeze driving updates and recorder
+  input while paused; keep receiving Session updates to detect resume.
+- Added separate retainedLive values without weakening fresh-only API fields
+  or inventing values for never-received data. Added per-stream/sample identity.
+- Frontend retains readings/plots on pause or disconnection with accurate state
+  labels. Only new advancing telemetry samples extend plots; resume starts a
+  new path segment. Session/player/timeline changes reset cached live traces.
+- Added six backend regression tests in tests/test_pause_retention.py.
+- Validation: 156 tests passed, TypeScript/Vite build passed, simulated DOM and
+  WebSocket checks passed for freeze/resume/disconnect/reset. No game installed
+  here; live-game check remains with the repository owner.
+
+## PR #1 merge integration — 2026-11-05
+
+- Integrated persistent lap comparison and retained-live telemetry with the
+  Gemini coach, benchmark APIs, and additional track outlines.
+- Kept both live telemetry freshness handling and the existing coaching/lap
+  comparison UI; consolidated overlapping sector-analysis styles.
+- Validation: 156 backend tests passed and the frontend production build passed.
+- Live-game validation remains pending.

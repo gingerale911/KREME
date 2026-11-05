@@ -184,7 +184,7 @@ def generate_coach_advice(
             c for c in corner_deltas if focus_sector is None or c.sector == focus_sector
         ]
         top_corners = sorted(sector_corners, key=lambda c: c.time_loss_s, reverse=True)[:3]
-        
+
         fallback_lines = [
             f"### Sector {focus_sector or 1} Telemetry Briefing (Last Completed Lap)",
             f"*Primary time leak in Sector {focus_sector or 1}: Braking and apex speed deficits vs Ideal Ghost.*\n",

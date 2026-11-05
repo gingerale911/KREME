@@ -12,6 +12,8 @@ Design (plan §4.1, §4.3):
 from __future__ import annotations
 
 import math
+import copy
+from uuid import uuid4
 import threading
 import time
 from collections import deque
@@ -28,11 +30,13 @@ from krem.core import (
     PacketId,
 )
 from krem.ingest import DecodedPacket
+from krem.pipeline.lap_recorder import LapRecorder
 
 
 @dataclass
 class SessionInfo:
     """Current session metadata extracted from Session packets."""
+    game_paused: bool = False
     session_uid: int = 0
     track_id: int = -1
     track_name: str = "Unknown"
@@ -123,15 +127,8 @@ class LiveState:
     # Events log (last N events)
     events: deque = field(default_factory=lambda: deque(maxlen=100))
 
-    # Lap analysis / session persistence
-    lap_history: deque = field(default_factory=lambda: deque(maxlen=16))
-    _last_recorded_lap: int | None = field(default=None, init=False, repr=False)
-    _current_lap_samples: list[dict[str, float]] = field(
-        default_factory=list,
-        init=False,
-        repr=False,
-    )
-    _current_lap_max_speed: float = field(default=0.0, init=False, repr=False)
+    # Recorder owns completed and in-progress laps. Guarded by _lock.
+    lap_recorder: LapRecorder = field(default_factory=LapRecorder)
 
     # Frame tracking
     last_update_time: float = 0.0
@@ -139,15 +136,58 @@ class LiveState:
     session_time: float = 0.0
     overall_frame_id: int = 0
 
+    # Monotonic receipt times: freshness must not depend on game/replay time.
+    _packet_times: dict[int, float] = field(default_factory=dict, repr=False)
+    _active_uid: int | None = field(default=None, repr=False)
+    _stream_id: str = field(default_factory=lambda: uuid4().hex, repr=False)
+
+    def _reset_feed(self) -> None:
+        self._stream_id = uuid4().hex
+        self.session = SessionInfo()
+        self.player = PlayerState()
+        for name in ("motion", "lap_data", "telemetry", "status", "damage",
+                     "motion_ex", "participants"):
+            setattr(self, f"latest_{name}", None)
+        self.latest_session_history.clear()
+        self.latest_tyre_sets.clear()
+        self._packet_times.clear()
+        self.events.clear()
+
+    def _freshness(self, pid: int, now: float) -> dict[str, Any]:
+        received = self._packet_times.get(pid)
+        timeout = 12.0 if pid == PacketId.PARTICIPANTS else 2.0
+        age = None if received is None else max(0.0, now - received)
+        return {"state": "missing" if age is None else "stale" if age >= timeout else "fresh",
+                "ageSeconds": None if age is None else round(age, 3)}
+
     def update(self, packet: DecodedPacket) -> None:
         """Update live state from a decoded packet."""
         pid = packet.header.packet_id
         with self._lock:
+            uid = int(packet.header.session_uid)
+            if self._active_uid is not None and (
+                uid != self._active_uid or self.player_car_index != packet.header.player_car_index
+            ):
+                self._reset_feed()
+            self._active_uid = uid
+            self.session.session_uid = uid
             self.player_car_index = packet.header.player_car_index
             self.last_update_time = time.monotonic()
+            # The explicit game flag controls pause; silence alone is not pause.
+            if pid == PacketId.SESSION:
+                self.session.game_paused = bool(packet.data.get("gamePaused", 0))
+            elif self.session.game_paused and pid not in (PacketId.EVENT, PacketId.SESSION_HISTORY):
+                return  # retain last driving state; do not record paused repeats
+
+            cars = packet.data.get("cars")
+            if cars is None or 0 <= self.player_car_index < len(cars):
+                self._packet_times[pid] = self.last_update_time
+            else:
+                self._packet_times.pop(pid, None)
             self.session_time = packet.header.session_time
             self.overall_frame_id = packet.header.overall_frame_identifier
             self.frame_count += 1
+            self.lap_recorder.ingest(packet)
 
             if pid == PacketId.MOTION:
                 self.latest_motion = packet
@@ -191,14 +231,7 @@ class LiveState:
     def _update_session(self, packet: DecodedPacket) -> None:
         d = packet.data
         s = self.session
-        previous_uid = s.session_uid
-        new_uid = int(packet.header.session_uid)
-        if previous_uid != 0 and new_uid != previous_uid:
-            self.lap_history.clear()
-            self._current_lap_samples = []
-            self._current_lap_max_speed = 0.0
-            self._last_recorded_lap = None
-        s.session_uid = new_uid
+        s.session_uid = int(packet.header.session_uid)
         s.track_id = d["trackId"]
         s.track_name = TRACK_NAMES.get(d["trackId"], f"Track {d['trackId']}")
         s.track_length = d["trackLength"]
@@ -223,7 +256,7 @@ class LiveState:
     def _update_motion(self, packet: DecodedPacket) -> None:
         idx = self.player_car_index
         cars = packet.data["cars"]
-        if idx < len(cars):
+        if 0 <= idx < len(cars):
             car = cars[idx]
             self.player.g_force_lat = float(car["gForceLateral"])
             self.player.g_force_long = float(car["gForceLongitudinal"])
@@ -231,21 +264,14 @@ class LiveState:
     def _update_lap_data(self, packet: DecodedPacket) -> None:
         idx = self.player_car_index
         cars = packet.data["cars"]
-        if idx < len(cars):
+        if 0 <= idx < len(cars):
             car = cars[idx]
             p = self.player
-            previous_lap = p.current_lap_num
             p.lap_distance = float(car["lapDistance"])
             p.total_distance = float(car["totalDistance"])
             p.last_lap_time_ms = int(car["lastLapTimeInMS"])
             p.current_lap_time_ms = int(car["currentLapTimeInMS"])
             p.current_lap_num = int(car["currentLapNum"])
-            if previous_lap > 0 and p.current_lap_num <= 1 and p.current_lap_num < previous_lap:
-                self.lap_history.clear()
-                self._current_lap_samples = []
-                self._current_lap_max_speed = 0.0
-                self._last_recorded_lap = None
-
             p.sector1_time_ms = (                int(car["sector1TimeMinutesPart"]) * 60_000
                 + int(car["sector1TimeMSPart"])
             )
@@ -259,12 +285,11 @@ class LiveState:
             p.pit_status = int(car["pitStatus"])
             p.driver_status = int(car["driverStatus"])
             p.penalties = int(car["penalties"])
-            self._record_lap_transition(previous_lap, p.current_lap_num)
 
     def _update_telemetry(self, packet: DecodedPacket) -> None:
         idx = self.player_car_index
         cars = packet.data["cars"]
-        if idx < len(cars):
+        if 0 <= idx < len(cars):
             car = cars[idx]
             p = self.player
             p.speed = int(car["speed"])
@@ -274,13 +299,12 @@ class LiveState:
             p.gear = int(car["gear"])
             p.rpm = int(car["engineRPM"])
             p.drs = int(car["drs"])
-            self._record_lap_sample()
-        p.suggested_gear = packet.data.get("suggestedGear", 0)
+            p.suggested_gear = packet.data.get("suggestedGear", 0)
 
     def _update_status(self, packet: DecodedPacket) -> None:
         idx = self.player_car_index
         cars = packet.data["cars"]
-        if idx < len(cars):
+        if 0 <= idx < len(cars):
             car = cars[idx]
             p = self.player
             p.ers_store = float(car["ersStoreEnergy"])
@@ -301,62 +325,16 @@ class LiveState:
             "details": {k: v for k, v in packet.data.items() if k != "code"},
         })
 
-    def _record_lap_sample(self) -> None:
-        """Collect lap telemetry samples for later lap-by-lap comparison."""
-        if self.player.current_lap_num <= 0:
-            return
-        sample = {
-            "speed": float(self.player.speed),
-            "throttle": float(self.player.throttle),
-            "brake": float(self.player.brake),
-            "distance": float(self.player.lap_distance),
-            "lapDistance": float(self.player.lap_distance),
-        }
-        self._current_lap_samples.append(sample)
-        self._current_lap_max_speed = max(
-            self._current_lap_max_speed,
-            float(self.player.speed),
-        )
-
-    def _record_lap_transition(self, previous_lap: int, current_lap: int) -> None:
-        """Finalize a completed lap before the next lap starts."""
-        if previous_lap <= 0 or current_lap == previous_lap:
-            self._last_recorded_lap = current_lap
-            return
-        if not self._current_lap_samples:
-            self._last_recorded_lap = current_lap
-            return
-        avg_speed = sum(sample["speed"] for sample in self._current_lap_samples)
-        avg_speed /= len(self._current_lap_samples)
-        avg_throttle = sum(sample["throttle"] for sample in self._current_lap_samples)
-        avg_throttle /= len(self._current_lap_samples)
-        avg_brake = sum(sample["brake"] for sample in self._current_lap_samples)
-        avg_brake /= len(self._current_lap_samples)
-        lap_time_ms = max(0, int(self.player.last_lap_time_ms or self.player.current_lap_time_ms))
-        self.lap_history.append({
-            "lap": previous_lap,
-            "lapTimeMs": lap_time_ms,
-            "sector1TimeMs": self.player.sector1_time_ms,
-            "sector2TimeMs": self.player.sector2_time_ms,
-            "sector3TimeMs": max(0, lap_time_ms - self.player.sector1_time_ms - self.player.sector2_time_ms),
-            "avgSpeedKph": round(avg_speed, 1),
-            "maxSpeedKph": round(self._current_lap_max_speed, 1),
-            "avgThrottle": round(avg_throttle, 3),
-            "avgBrake": round(avg_brake, 3),
-            "samples": list(self._current_lap_samples),
-        })
-        self._current_lap_samples = []
-        self._current_lap_max_speed = 0.0
-        self._last_recorded_lap = current_lap
-
     def lap_history_snapshot(self) -> list[dict[str, Any]]:
         """Return the completed lap records for this telemetry session."""
         with self._lock:
-            return [_json_safe(item) for item in list(self.lap_history)]
+            self.lap_recorder.flush()
+            return [_json_safe(item) for item in self.lap_recorder.records]
 
     def snapshot(self) -> dict[str, Any]:
         """Create a compact, JSON-safe snapshot for API and WebSocket frames."""
         with self._lock:
+            self.lap_recorder.flush()
             idx = self.player_car_index
             player_name, player_number = self._driver_info(idx)
             sector3_time = None
@@ -371,7 +349,14 @@ class LiveState:
             ):
                 sector3_time = self.player.current_lap_time_ms - completed_splits
 
-            return {
+            telemetry = self.latest_telemetry
+            result = {
+                "liveStreamId": self._stream_id,
+                "gamePaused": self.session.game_paused,
+                "telemetrySample": None if telemetry is None else {
+                    "id": f"{self._stream_id}:{telemetry.header.overall_frame_identifier}",
+                    "sessionTime": float(telemetry.header.session_time),
+                },
                 "session": {
                     "uid": self.session.session_uid,
                     "trackId": self.session.track_id,
@@ -441,11 +426,58 @@ class LiveState:
                 "events": [
                     _json_safe(event) for event in list(self.events)[-10:]
                 ],
-                "laps": [_json_safe(item) for item in list(self.lap_history)],
+                "laps": [_json_safe(item) for item in self.lap_recorder.records],
+                "recorder": self.lap_recorder.status(),
                 "frameCount": self.frame_count,
                 "frameId": self.overall_frame_id,
                 "playerCarIndex": idx,
             }
+
+            now = time.monotonic()
+            groups = {
+                "telemetry": (PacketId.CAR_TELEMETRY, "speed throttle brake steer gear rpm drs suggestedGear"),
+                "status": (PacketId.CAR_STATUS, "drsAllowed ersStore ersMode fuel fuelLaps fuelCapacity tyreCompound tyreAge ersDeployedThisLap"),
+                "lap": (PacketId.LAP_DATA, "lapDist totalDist lastLapTime lapTime lapNum sector1TimeMs sector2TimeMs sector3TimeMs sector position invalid pitStatus driverStatus penalties"),
+                "motion": (PacketId.MOTION, "gLat gLong"),
+                "damage": (PacketId.CAR_DAMAGE, ""),
+                "session": (PacketId.SESSION, ""),
+                "participants": (PacketId.PARTICIPANTS, "name driverNumber"),
+            }
+            freshness = {name: self._freshness(pid, now) for name, (pid, _) in groups.items()}
+            result["freshness"] = freshness
+            def mask(view: dict[str, Any], missing_only: bool) -> None:
+                def unavailable(name: str) -> bool:
+                    state = freshness[name]["state"]
+                    return state == "missing" if missing_only else state != "fresh"
+                player = view["player"]
+                for name, (_, keys) in groups.items():
+                    if unavailable(name):
+                        for key in keys.split():
+                            player[key] = None
+                tyres = player["tyres"]
+                if unavailable("telemetry"):
+                    for key in ("surfaceTempC", "innerTempC", "pressurePsi", "brakeTempC"):
+                        tyres[key] = None
+                if unavailable("damage"):
+                    tyres["wearPct"] = tyres["damagePct"] = None
+                    player["damage"] = dict.fromkeys(player["damage"])
+                if unavailable("status"):
+                    for key in ("actualCompound", "actualCompoundName", "visualCompound", "visualCompoundName", "ageLaps"):
+                        tyres[key] = None
+                if unavailable("session"):
+                    view["session"] = {key: value if key == "uid" else None
+                                         for key, value in view["session"].items()}
+                if unavailable("motion"):
+                    view["cars"] = []
+                elif unavailable("lap"):
+                    for car in view["cars"]:
+                        for key in ("position", "lap", "sector", "lapDistance"):
+                            car[key] = None
+            retained = {key: copy.deepcopy(result[key]) for key in ("player", "session", "cars")}
+            mask(retained, missing_only=True)
+            mask(result, missing_only=False)
+            result["retainedLive"] = retained
+            return result
 
     def events_snapshot(self, limit: int | None = None) -> list[dict[str, Any]]:
         """Return a JSON-safe copy of recent event records."""
