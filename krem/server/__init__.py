@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from krem.pipeline import LiveState
 from krem.coach import BenchmarkRegistry, compare_lap_to_benchmark, generate_coach_advice, get_gemini_api_key, persist_gemini_api_key
+from krem.storage import get_db
 from krem.ingest.protocol import F1UDPProtocol, PacketStats
 from krem.storage.lap_repository import LapRepository
 from krem.server.lap_comparison_api import create_lap_comparison_router
@@ -237,9 +238,44 @@ def create_app(
         persist_gemini_api_key(req.apiKey.strip())
         return {"status": "ok", "message": "Gemini API key configured successfully"}
 
+    @app.get("/api/db/engine")
+    async def get_db_engine():
+        """Get current database query engine mode (sqlite vs duckdb)."""
+        db = get_db()
+        return {"mode": db.mode, "dbPath": str(db.db_path)}
+
+    @app.post("/api/db/engine/{mode}")
+    async def set_db_engine(mode: str):
+        """Switch query engine mode between 'sqlite' and 'duckdb'."""
+        if mode not in ("sqlite", "duckdb"):
+            raise HTTPException(status_code=400, detail="Mode must be 'sqlite' or 'duckdb'")
+        db = get_db()
+        msg = db.set_engine_mode(mode)
+        return {"status": "ok", "mode": db.mode, "message": msg}
+
+    @app.get("/api/circuits")
+    async def list_circuits():
+        """List all circuits stored in the database."""
+        db = get_db()
+        return db.list_circuits()
+
+    @app.get("/api/circuits/{track_id}")
+    async def get_circuit(track_id: int):
+        """Fetch complete circuit geometry and sections from database."""
+        db = get_db()
+        circuit = db.get_circuit(track_id)
+        if not circuit:
+            raise HTTPException(status_code=404, detail=f"Circuit {track_id} not found in database")
+        return circuit
+
     @app.get("/api/coach/benchmark/{track_id}")
     async def get_track_benchmark(track_id: int):
-        """Retrieve the ideal benchmark targets for a track."""
+        """Retrieve the ideal benchmark targets for a track (from SQLite DB or fallback registry)."""
+        db = get_db()
+        db_bm = db.get_benchmark(track_id)
+        if db_bm:
+            return db_bm
+
         benchmark = benchmark_registry.get_benchmark(track_id)
         if not benchmark:
             raise HTTPException(status_code=404, detail=f"No benchmark available for track {track_id}")

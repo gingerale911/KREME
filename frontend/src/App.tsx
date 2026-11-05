@@ -642,20 +642,32 @@ function App() {
 
       for (const [trackIdString, fileName] of entries) {
         try {
-          const response = await fetch(`/track_data/${fileName}`);
-          if (!response.ok) continue;
-          const data = await response.json() as {
+          const trackId = Number(trackIdString);
+          // Try database API endpoint first, fallback to static JSON asset if offline/unseeded
+          let data: {
             left_edge?: [number, number][];
             right_edge?: [number, number][];
             lines?: { formula1?: { racing_line?: [number, number][] } };
             orientation?: number;
-          };
+          } | null = null;
+
+          const dbRes = await fetch(`/api/circuits/${trackId}`);
+          if (dbRes.ok) {
+            data = await dbRes.json();
+          } else {
+            const staticRes = await fetch(`/track_data/${fileName}`);
+            if (staticRes.ok) {
+              data = await staticRes.json();
+            }
+          }
+
+          if (!data) continue;
 
           const leftEdge = (data.left_edge ?? []).map(([x, z]) => ({ x, z }));
           const rightEdge = (data.right_edge ?? []).map(([x, z]) => ({ x, z }));
           const racingLine = (data.lines?.formula1?.racing_line ?? []).map(([x, z]) => ({ x, z }));
 
-          nextCatalog[Number(trackIdString)] = {
+          nextCatalog[trackId] = {
             leftEdge,
             rightEdge,
             racingLine,
