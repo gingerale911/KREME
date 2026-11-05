@@ -311,8 +311,41 @@ def create_app(
         last_lap_num = target_lap_data.get("lap") if target_lap_data else None
 
         all_deltas = compare_lap_to_benchmark(samples, benchmark)
-        sector_deltas = [d for d in all_deltas if d.sector == next_sector]
-        if not sector_deltas:
+        # Ensure EVERY corner in next_sector is present
+        sector_bench_corners = [c for c in benchmark.corners if c.sector == next_sector]
+        deltas_by_turn = {str(d.turn): d for d in all_deltas}
+
+        from krem.coach.comparator import CornerDelta
+        sector_deltas = []
+        for bc in sector_bench_corners:
+            if str(bc.turn) in deltas_by_turn:
+                sector_deltas.append(deltas_by_turn[str(bc.turn)])
+            else:
+                sector_deltas.append(
+                    CornerDelta(
+                        turn=bc.turn,
+                        name=bc.name,
+                        start_m=bc.start_m,
+                        end_m=bc.end_m,
+                        apex_m=bc.apex_m,
+                        sector=bc.sector,
+                        ideal_brake_m=bc.ideal_brake_m,
+                        ideal_apex_speed_kph=bc.ideal_apex_speed_kph,
+                        ideal_apex_gear=bc.ideal_apex_gear,
+                        ideal_throttle_m=bc.ideal_throttle_m,
+                        player_brake_on_m=None,
+                        player_min_speed_kph=bc.ideal_apex_speed_kph,
+                        player_throttle_on_m=None,
+                        brake_delta_m=None,
+                        apex_speed_delta_kph=0.0,
+                        throttle_delta_m=None,
+                        time_loss_s=0.0,
+                        diagnosis="Target ideal line",
+                        notes=bc.notes,
+                    )
+                )
+
+        if not sector_deltas and all_deltas:
             sector_deltas = all_deltas[:4]
 
         advice = generate_coach_advice(

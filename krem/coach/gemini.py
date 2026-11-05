@@ -7,6 +7,7 @@ the Google GenAI API to produce direct, corner-by-corner race engineer advice.
 from __future__ import annotations
 
 import os
+import re
 import logging
 from pathlib import Path
 from typing import Any
@@ -131,7 +132,7 @@ INSTRUCTIONS:
 2. Do NOT output any introductory text, pleasantries, summary headers (do NOT write "SUMMARY" or "FIXES"), or conclusion paragraphs.
 3. Do NOT use markdown bold asterisks (**) or bullet points. Output strictly plain text.
 4. Output strictly one plain-text line per corner:
-Turn <N> (<Turn Name if available>): <1-2 sentences of direct technical correction. Specify braking adjustment (in meters deeper/earlier), target apex speed (km/h) and gear, and exit throttle timing. If the driver is already on pace with no significant time loss, state "On pace — maintain entry line and carry {ideal_speed} km/h in gear {ideal_gear}.">
+Turn <N> (<Turn Name if available>): <1-2 sentences of direct technical correction. Specify braking adjustment (in meters deeper/earlier), target apex speed (km/h) and gear, and exit throttle timing. If the driver is already on pace with no significant time loss, state "On pace — maintain entry line and carry target speed km/h in gear target gear.">
 
 EXAMPLE OUTPUT FORMAT:
 Turn 1 (Koval Hairpin): Push braking 12m deeper to the 80m board. Carry 3rd gear through the apex at 105 km/h, then get on full throttle earlier on exit.
