@@ -7,13 +7,16 @@ import asyncio
 import logging
 import time
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from pydantic import BaseModel
 from krem.pipeline import LiveState
+from krem.coach import BenchmarkRegistry, compare_lap_to_benchmark, generate_coach_advice, get_gemini_api_key, persist_gemini_api_key
 from krem.ingest.protocol import F1UDPProtocol, PacketStats
 from krem.storage.lap_repository import LapRepository
 from krem.server.lap_comparison_api import create_lap_comparison_router
@@ -202,6 +205,99 @@ def create_app(
             )
 
         return trace
+
+
+    # ---------------------------------------------------------
+    # Benchmark / Coach APIs
+    # ---------------------------------------------------------
+
+    benchmark_registry = BenchmarkRegistry()
+
+    class CoachRequest(BaseModel):
+        lapNum: Optional[int] = None
+        trackId: Optional[int] = None
+
+    class ApiKeyRequest(BaseModel):
+        apiKey: str
+
+    @app.get("/api/coach/status")
+    async def coach_status():
+        """Check if Gemini API key is configured."""
+        api_key = get_gemini_api_key()
+        return {
+            "hasApiKey": bool(api_key),
+            "model": "gemini-3.5-flash",
+        }
+
+    @app.post("/api/coach/key")
+    async def set_coach_api_key(req: ApiKeyRequest):
+        """Configure or update Gemini API key dynamically."""
+        if not req.apiKey or not req.apiKey.strip():
+            raise HTTPException(status_code=400, detail="API key cannot be empty")
+        persist_gemini_api_key(req.apiKey.strip())
+        return {"status": "ok", "message": "Gemini API key configured successfully"}
+
+    @app.get("/api/coach/benchmark/{track_id}")
+    async def get_track_benchmark(track_id: int):
+        """Retrieve the ideal benchmark targets for a track."""
+        benchmark = benchmark_registry.get_benchmark(track_id)
+        if not benchmark:
+            raise HTTPException(status_code=404, detail=f"No benchmark available for track {track_id}")
+        return benchmark.to_dict()
+
+    @app.post("/api/coach/analyse")
+    async def analyse_lap(req: CoachRequest | None = None):
+        """Analyze the last completed lap against the track's ideal benchmark for the upcoming sector."""
+        session_info = live_state.snapshot()["session"]
+        player_info = live_state.snapshot()["player"]
+        track_id = (req.trackId if req and req.trackId is not None else session_info.get("trackId", -1))
+
+        # Retrieve benchmark for the EXACT track_id
+        benchmark = benchmark_registry.get_benchmark(track_id)
+
+        lap_history = live_state.lap_history_snapshot()
+        target_lap_data = None
+
+        if req and req.lapNum is not None:
+            for l in lap_history:
+                if l.get("lap") == req.lapNum:
+                    target_lap_data = l
+                    break
+
+        if not target_lap_data and lap_history:
+            target_lap_data = lap_history[-1]
+
+        current_sector_idx = int(player_info.get("sector", 0) or 0)
+        next_sector = ((current_sector_idx + 1) % 3) + 1
+
+        samples = target_lap_data.get("samples", []) if target_lap_data else []
+        lap_time_ms = target_lap_data.get("lapTimeMs", 0) if target_lap_data else 0
+        last_lap_num = target_lap_data.get("lap") if target_lap_data else None
+
+        all_deltas = compare_lap_to_benchmark(samples, benchmark)
+        sector_deltas = [d for d in all_deltas if d.sector == next_sector]
+        if not sector_deltas:
+            sector_deltas = all_deltas[:4]
+
+        advice = generate_coach_advice(
+            track=benchmark,
+            player_lap_time_ms=lap_time_ms,
+            corner_deltas=all_deltas,
+            focus_sector=next_sector,
+            last_lap_num=last_lap_num,
+        )
+
+        return {
+            "track": benchmark.to_dict(),
+            "lapNum": last_lap_num,
+            "lapTimeMs": lap_time_ms,
+            "nextSector": next_sector,
+            "currentSector": current_sector_idx + 1,
+            "hasApiKey": bool(get_gemini_api_key()),
+            "deltas": [d.to_dict() for d in sector_deltas],
+            "advice": advice,
+        }
+
 
     # ---------------------------------------------------------
     # WebSocket

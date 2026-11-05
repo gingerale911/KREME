@@ -6,7 +6,7 @@
 - **Name:** KREM
 - **Purpose:** Standalone real-time telemetry dashboard focused on F1 25
 - **Current stack:** Python asyncio/FastAPI backend · NumPy decoder · React + TypeScript + Vite frontend · WebSocket
-- **Planned AI provider:** Gemini API via Google AI Studio; coaching is not implemented yet
+- **AI provider:** Gemini API via Google AI Studio; coaching runs server-side and keeps the key out of the browser
 - **UDP Format:** 2025 only (`m_packetFormat == 2025 && m_gameYear == 25`)
 - **Source Plan:** [`F1_25_Telemetry_Dashboard_Plan.md`](file:///Users/dp/Desktop/F1/KREM/F1_25_Telemetry_Dashboard_Plan.md)
 - **Protocol reference:** EA SPORTS F1 25 UDP Specification (see source note in the plan). The local third-party struct transcription is intentionally not tracked.
@@ -35,10 +35,10 @@ Lap persistence, reference traces, calibrated track maps, and AI coaching remain
 | **M0** | Capture tool + verification tests V0–V15 | 🔨 In Progress — requires live game captures |
 | **M1** | Ingest, guard, decode, recorder, replay | 🔨 Core implemented; capture-based exit check pending |
 | M2 | Panel 1 map + calibration + learned-line fallback | 🔨 Live world-position view; calibration/map overlays pending |
-| M3 | Lap segmenter, resampler, DuckDB, reference store | ⬜ Not Started |
+| M3 | Lap segmenter, resampler, DuckDB, reference store | ✅ Implemented; live-game validation pending |
 | M4 | Panel 2 sectors/colours | 🔨 Live lap/sector display; reference-based colours pending |
 | M5 | Panel 3 graphs, Panel 4 values/classifier | 🔨 Live rolling charts and values; reference/classifier work pending |
-| M6 | AI coach + eval harness (Gemini / Google AI Studio) | ⬜ Not Started |
+| M6 | AI coach + eval harness (Gemini / Google AI Studio) | ✅ Coach and benchmark APIs implemented; live-game validation pending |
 | M7 | Packaging, settings, attribution screen | 🔨 Python package and frontend build work; installer/settings pending |
 | M8 | Track-edge estimation (stretch) | ⬜ Not Started |
 
@@ -210,3 +210,12 @@ KREM/
 - Validation: 156 tests passed, TypeScript/Vite build passed, simulated DOM and
   WebSocket checks passed for freeze/resume/disconnect/reset. No game installed
   here; live-game check remains with the repository owner.
+
+## PR #1 merge integration — 2026-11-05
+
+- Integrated persistent lap comparison and retained-live telemetry with the
+  Gemini coach, benchmark APIs, and additional track outlines.
+- Kept both live telemetry freshness handling and the existing coaching/lap
+  comparison UI; consolidated overlapping sector-analysis styles.
+- Validation: 156 backend tests passed and the frontend production build passed.
+- Live-game validation remains pending.

@@ -918,82 +918,6 @@ button { font: inherit; }
 }
 
 
-/* Step 7 — sector-by-sector lap analysis */
-.sector-analysis {
-  margin-top: 18px;
-  padding: 16px;
-  border: 1px solid var(--border, #26313d);
-  border-radius: 8px;
-  background: rgba(8, 12, 18, 0.34);
-}
-.sector-analysis-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-.sector-analysis-heading h3 {
-  margin: 5px 0 0;
-  font-size: 17px;
-  font-weight: 700;
-}
-.sector-table { width: 100%; }
-.sector-table-row {
-  display: grid;
-  grid-template-columns: 1.05fr 1fr 1fr 1fr;
-  align-items: center;
-  gap: 10px;
-  min-height: 42px;
-  border-top: 1px solid rgba(126, 145, 166, 0.13);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.sector-table-row > :not(:first-child) { text-align: right; }
-.sector-table-row strong { color: #dce6f2; }
-.sector-table-row b { font-weight: 700; }
-.sector-table-header {
-  min-height: 30px;
-  border-top: 0;
-  color: #71869d;
-  font-size: 9px;
-  letter-spacing: 0.09em;
-}
-.sector-insights {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 14px;
-}
-.sector-insights > div {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  border: 1px solid rgba(126, 145, 166, 0.16);
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.018);
-}
-.sector-insights span {
-  color: #71869d;
-  font-size: 9px;
-  letter-spacing: 0.09em;
-}
-.sector-insights strong { color: #e7edf5; font-size: 13px; }
-.sector-insights b { font-size: 12px; }
-.sector-analysis-note {
-  margin: 12px 0 0;
-  color: #71869d;
-  font-size: 10px;
-  line-height: 1.5;
-}
-@media (max-width: 560px) {
-  .sector-analysis-heading { flex-direction: column; }
-  .sector-table-row { grid-template-columns: 0.8fr 1fr 1fr 1fr; gap: 5px; font-size: 10px; }
-  .sector-table-header { font-size: 8px; }
-  .sector-insights { grid-template-columns: 1fr; }
-}
-
 /* Restore the original persistent lap-comparison chart styling */
 .comparison-graphs {
   display: flex;
@@ -1249,4 +1173,284 @@ button { font: inherit; }
 }
 @media (max-width: 760px) {
   .persistent-selectors { grid-template-columns: minmax(0, 1fr); }
+}
+
+.coach-button.active-coach {
+  cursor: pointer;
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.25), rgba(59, 130, 246, 0.25));
+  border: 1px solid rgba(168, 85, 247, 0.5);
+  box-shadow: 0 0 16px rgba(168, 85, 247, 0.2);
+  transition: all 0.2s ease;
+  color: #fff;
+}
+.coach-button.active-coach:hover {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.4), rgba(59, 130, 246, 0.4));
+  border-color: rgba(168, 85, 247, 0.8);
+  box-shadow: 0 0 24px rgba(168, 85, 247, 0.35);
+  transform: translateY(-1px);
+}
+.coach-tag {
+  background: #a855f7;
+  color: #fff;
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+  margin-left: 6px;
+}
+.coach-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.coach-modal-card {
+  background: #11161e;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  border-radius: 16px;
+  width: min(920px, 95vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.8), 0 0 40px rgba(168, 85, 247, 0.15);
+  overflow: hidden;
+}
+.coach-modal-header {
+  padding: 20px 28px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #151b24;
+}
+.coach-eyebrow {
+  font-size: 0.75rem;
+  letter-spacing: 0.15em;
+  color: #a855f7;
+  font-weight: 700;
+}
+.coach-modal-header h2 {
+  margin: 4px 0 0;
+  font-size: 1.35rem;
+  font-family: 'Barlow Condensed', sans-serif;
+  letter-spacing: 0.05em;
+}
+.coach-sector-pill {
+  display: inline-block;
+  background: rgba(49, 212, 134, 0.15);
+  border: 1px solid rgba(49, 212, 134, 0.4);
+  color: #31d486;
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  border-radius: 6px;
+  margin-top: 6px;
+  letter-spacing: 0.05em;
+}
+.coach-close-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.coach-close-btn:hover {
+  color: #fff;
+  border-color: #a855f7;
+}
+.coach-modal-body {
+  padding: 24px 28px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.coach-key-banner {
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.coach-key-desc strong {
+  display: block;
+  font-size: 0.95rem;
+  color: #eceff4;
+}
+.coach-key-desc span {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.coach-key-inputs {
+  display: flex;
+  gap: 10px;
+}
+.coach-key-inputs input {
+  flex: 1;
+  background: #090c11;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: #fff;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.85rem;
+}
+.coach-key-inputs button {
+  background: #a855f7;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.coach-key-inputs button:hover {
+  background: #9333ea;
+}
+.key-msg {
+  font-size: 0.8rem;
+  color: #31d486;
+}
+.coach-spinner-box {
+  padding: 48px 0;
+  text-align: center;
+  color: var(--muted);
+}
+.coach-spinner {
+  display: inline-block;
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(168, 85, 247, 0.2);
+  border-top-color: #a855f7;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 14px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.coach-report-box {
+  background: #151b24;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px 24px;
+}
+.briefing-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 10px;
+}
+.briefing-header h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  letter-spacing: 0.1em;
+  color: #31d486;
+}
+.last-lap-tag {
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.coach-markdown-text p {
+  margin: 0 0 8px;
+  line-height: 1.55;
+  font-size: 0.95rem;
+}
+.briefing-subhead {
+  color: #a855f7;
+  font-size: 0.9rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 14px 0 6px;
+}
+.briefing-bullet {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+  line-height: 1.5;
+  font-size: 0.92rem;
+}
+.bullet-dot {
+  color: #31d486;
+  font-weight: 700;
+}
+.briefing-spacer {
+  height: 8px;
+}
+.coach-deltas-section h3 {
+  margin: 0 0 14px;
+  font-size: 0.9rem;
+  letter-spacing: 0.1em;
+  color: #70a9ff;
+}
+.deltas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+.delta-card {
+  background: #151b24;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.delta-card.loss-high {
+  border-color: rgba(241, 72, 81, 0.4);
+  background: rgba(241, 72, 81, 0.04);
+}
+.delta-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.delta-turn {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #fff;
+}
+.delta-loss-badge {
+  font-size: 0.75rem;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+.badge-red {
+  background: rgba(241, 72, 81, 0.2);
+  color: #f14851;
+}
+.badge-green {
+  background: rgba(49, 212, 134, 0.2);
+  color: #31d486;
+}
+.delta-diag {
+  font-size: 0.85rem;
+  color: #eceff4;
+  line-height: 1.4;
+}
+.delta-stats {
+  font-size: 0.78rem;
+  color: var(--muted);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.delta-stats b {
+  color: #eceff4;
 }

@@ -129,6 +129,41 @@ interface PacketFreshness {
   ageSeconds: number | null;
 }
 
+interface CornerDeltaUI {
+  turn: string;
+  name: string;
+  apex_m: number;
+  sector: number;
+  ideal_brake_m: number;
+  ideal_apex_speed_kph: number;
+  ideal_apex_gear: number;
+  player_brake_on_m?: number | null;
+  player_min_speed_kph: number;
+  player_throttle_on_m?: number | null;
+  brake_delta_m?: number | null;
+  apex_speed_delta_kph: number;
+  throttle_delta_m?: number | null;
+  time_loss_s: number;
+  diagnosis: string;
+  notes: string;
+}
+
+interface CoachAnalysisResponse {
+  track?: {
+    track_id: number;
+    track_name: string;
+    track_length_m: number;
+    ideal_lap_time_ms: number;
+  };
+  lapNum?: number | null;
+  lapTimeMs?: number;
+  nextSector?: number;
+  currentSector?: number;
+  hasApiKey: boolean;
+  deltas: CornerDeltaUI[];
+  advice: string;
+}
+
 interface TelemetrySnapshot {
   liveStreamId?: string;
   gamePaused?: boolean;
@@ -172,6 +207,9 @@ const TRACK_FILES: Record<number, string> = {
   0: "f1-25_melbourne.json",
   2: "f1-25_shanghai.json",
   3: "f1-25_sakhir.json",
+  4: "f1-25_catalunya.json",
+  5: "f1-25_monaco.json",
+  6: "f1-25_montreal.json",
   7: "f1-25_silverstone.json",
   9: "f1-25_hungaroring.json",
   10: "f1-25_spa.json",
@@ -179,10 +217,17 @@ const TRACK_FILES: Record<number, string> = {
   12: "f1-25_singapore.json",
   13: "f1-25_suzuka.json",
   14: "f1-25_abu-dhabi.json",
+  15: "f1-25_texas.json",
+  16: "f1-25_brazil.json",
   17: "f1-25_red-bull-ring.json",
+  19: "f1-25_mexico.json",
   20: "f1-25_baku.json",
   26: "f1-25_zandvoort.json",
   27: "f1-25_imola.json",
+  29: "f1-25_jeddah.json",
+  30: "f1-25_miami.json",
+  31: "f1-25_las-vegas.json",
+  32: "f1-25_losail.json",
 };
 
 function isNumber(value: unknown): value is number {
@@ -328,11 +373,14 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
   }, [cars, history, trackOutline]);
 
   const bounds = useMemo(() => {
-    const points = [
-      ...transformedWorld.trackPoints,
-      ...transformedWorld.mappedHistory,
-      ...transformedWorld.mappedCars,
-    ];
+    // If a static track outline is present, use trackPoints as the bounding box
+    // so cars project cleanly on the circuit geometry without viewport distortion.
+    const points = transformedWorld.trackPoints.length > 0
+      ? transformedWorld.trackPoints
+      : [
+          ...transformedWorld.mappedHistory,
+          ...transformedWorld.mappedCars,
+        ];
     if (!points.length) return null;
     const xs = points.map((point) => point.x);
     const zs = points.map((point) => point.z);
@@ -351,7 +399,7 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
     const offsetY = (height - (spanZ + padZ * 2) * scale) / 2;
     const project = (point: Position) => ({
       x: offsetX + (point.x - minX + padX) * scale,
-      y: height - offsetY - (point.z - minZ + padZ) * scale,
+      y: offsetY + (point.z - minZ + padZ) * scale,
     });
     return { project };
   }, [cars, history, trackOutline]);
@@ -390,14 +438,19 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
           </pattern>
         </defs>
         <rect width="1000" height="560" fill="url(#map-grid)" />
-        {trackOutline && trackSurfacePath && (
+        {trackOutline && trackSurfacePath ? (
           <>
             <path d={trackSurfacePath} fill="rgba(44, 180, 166, 0.12)" stroke="rgba(78, 220, 193, 0.9)" strokeWidth={1.1} />
             <path d={trackRacingLine} fill="none" stroke="rgba(138, 173, 255, 0.72)" strokeWidth={1.2} strokeDasharray="4 4" />
           </>
+        ) : (
+          hasTrack && path && (
+            <>
+              <polyline points={path} className="track-shadow" />
+              <polyline points={path} className="track-line" />
+            </>
+          )
         )}
-        {hasTrack && path && <polyline points={path} className="track-shadow" />}
-        {hasTrack && path && <polyline points={path} className="track-line" />}
         {cars.map((car, index) => {
           if (!bounds || !isNumber(car.worldX) || !isNumber(car.worldZ)) return null;
           const rotated = rotateTrackPoints([{ x: car.worldX, z: car.worldZ }], trackOutline?.orientation ?? 0)[0];
@@ -406,11 +459,15 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
           const heading = isNumber(car.heading) ? car.heading : 0;
           const forwardX = Math.sin(heading);
           const forwardZ = Math.cos(heading);
-          const magnitude = Math.hypot(forwardX, forwardZ) || 1;
+          const rotForward = rotateTrackPoints(
+            [{ x: forwardX, z: forwardZ }],
+            trackOutline?.orientation ?? 0,
+          )[0];
+          const magnitude = Math.hypot(rotForward.x, rotForward.z) || 1;
           const arrowScale = isPlayer ? 17 : 10;
           const tip = {
-            x: point.x + (forwardX / magnitude) * arrowScale,
-            y: point.y - (forwardZ / magnitude) * arrowScale,
+            x: point.x + (rotForward.x / magnitude) * arrowScale,
+            y: point.y + (rotForward.z / magnitude) * arrowScale,
           };
           return (
             <g key={`${car.index ?? index}-${car.driverNumber ?? ""}`} className={isPlayer ? "map-car player-car" : "map-car"}>
@@ -491,11 +548,43 @@ function App() {
   const [lightTheme, setLightTheme] = useState(false);
   const [selectedLap, setSelectedLap] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<"live" | "laps">("live");
+  const [coachOpen, setCoachOpen] = useState(false);
+  const [coachLoading, setCoachLoading] = useState(false);
+  const [coachData, setCoachData] = useState<CoachAnalysisResponse | null>(null);
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [keySaveMsg, setKeySaveMsg] = useState("");
+  const [hasApiKey, setHasApiKey] = useState(false);
   const [now, setNow] = useState(Date.now());
   const lastSample = useRef<string>("");
   const lastGameTime = useRef<number | null>(null);
   const traceGap = useRef(false);
   const socketConnected = state === "live" && lastMessageAt !== null && now - lastMessageAt < 2_000;
+
+  useEffect(() => {
+    fetch("/api/coach/status")
+      .then((r) => r.json())
+      .then((d) => setHasApiKey(Boolean(d.hasApiKey)))
+      .catch(() => {});
+  }, []);
+
+  const saveApiKey = async () => {
+    if (!apiKeyInput.trim()) return;
+    try {
+      const res = await fetch("/api/coach/key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: apiKeyInput.trim() }),
+      });
+      if (res.ok) {
+        setHasApiKey(true);
+        setKeySaveMsg("Saved! Rerun analysis to get Gemini insights.");
+        setApiKeyInput("");
+        setTimeout(() => setKeySaveMsg(""), 4000);
+      }
+    } catch (e) {
+      setKeySaveMsg("Failed to save key");
+    }
+  };
   const stats = snapshot?.stats;
   const telemetryFresh = snapshot?.freshness?.telemetry?.state === "fresh";
   const paused = socketConnected && snapshot?.gamePaused === true && snapshot?.freshness?.session?.state === "fresh";
@@ -504,6 +593,28 @@ function App() {
   const shown = frozen ? snapshot?.retainedLive ?? snapshot : snapshot;
   const player = shown?.player;
   const session = shown?.session;
+
+  const runCoachAnalysis = async () => {
+    setCoachLoading(true);
+    setCoachOpen(true);
+    try {
+      const res = await fetch("/api/coach/analyse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trackId: session?.trackId,
+          lapNum: isNumber(player?.lapNum) && player.lapNum > 1 ? player.lapNum - 1 : undefined,
+        }),
+      });
+      const data = await res.json();
+      setCoachData(data);
+      if (typeof data.hasApiKey === "boolean") setHasApiKey(data.hasApiKey);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setCoachLoading(false);
+    }
+  };
   const cars = Array.isArray(shown?.cars) ? shown.cars : [];
   const lapHistory = Array.isArray(snapshot?.laps) ? snapshot.laps : [];
 
@@ -760,10 +871,16 @@ function App() {
             <div className="values-footer">
               <div className="driving-state"><span className="state-dot" /><span>{isNumber(player?.brake) && isNumber(player?.throttle) ? (player.brake ?? 0) >= 0.02 ? "BRAKING" : (player.throttle ?? 0) >= 0.98 ? "FULL THROTTLE" : (player.throttle ?? 0) > 0.02 ? "ACCELERATING" : "COASTING" : "AWAITING TELEMETRY"}</span></div>
               <div className="coach-action">
-                <button className="coach-button" disabled title="Coming soon — Google AI Studio Gemini coaching will run server-side">
-                  <span className="coach-spark">✦</span> GEMINI COACH <span className="coming-soon">COMING SOON</span>
+                <button
+                  className="coach-button active-coach"
+                  onClick={runCoachAnalysis}
+                  disabled={coachLoading}
+                  title="Run live AI telemetry analysis against the Ideal Ghost benchmark"
+                >
+                  <span className="coach-spark">✦</span> {coachLoading ? "ANALYSING TELEMETRY..." : "GEMINI AI COACH"}
+                  <span className="coach-tag">IDEAL GHOST</span>
                 </button>
-                <span className="coach-note">GOOGLE AI STUDIO · SERVER-SIDE ONLY · NO BROWSER KEY</span>
+                <span className="coach-note">{hasApiKey ? "● GEMINI 3.5 CONNECTED" : "○ TELEMETRY MODE · SET GEMINI KEY FOR LIVE RADIO"}</span>
               </div>
             </div>
           </article>
@@ -777,6 +894,109 @@ function App() {
         <span>PACKETS {displayNumber(stats?.packetsReceived)} <i>·</i> ACCEPTED {displayNumber(stats?.packetsAccepted)} <i>·</i> REJECTED {displayNumber(stats?.packetsRejected)}</span>
         <span>{lastMessageAt ? `UPDATED ${new Date(lastMessageAt).toLocaleTimeString()}` : "WAITING FOR DATA"}</span>
       </footer>
+
+      {coachOpen && (
+        <div className="coach-modal-backdrop" onClick={() => setCoachOpen(false)}>
+          <div className="coach-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="coach-modal-header">
+              <div>
+                <span className="coach-eyebrow">✦ AI RACE ENGINEER</span>
+                <h2>Ideal Ghost Telemetry Coach · {coachData?.track?.track_name || session?.trackName || "Circuit"}</h2>
+                {coachData?.nextSector && (
+                  <div className="coach-sector-pill">
+                    FOCUS: <strong>SECTOR {coachData.nextSector}</strong> (BASED ON LAP {coachData.lapNum ?? "PREVIOUS"})
+                  </div>
+                )}
+              </div>
+              <button className="coach-close-btn" onClick={() => setCoachOpen(false)}>✕</button>
+            </div>
+
+            <div className="coach-modal-body">
+              {!hasApiKey && (
+                <div className="coach-key-banner">
+                  <div className="coach-key-desc">
+                    <strong>Enter Google Gemini API Key:</strong>
+                    <span>Enables live race engineer advice powered by Gemini 3.5 Flash.</span>
+                  </div>
+                  <div className="coach-key-inputs">
+                    <input
+                      type="password"
+                      placeholder="AIzaSy..."
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                    />
+                    <button onClick={saveApiKey}>Connect API Key</button>
+                  </div>
+                  {keySaveMsg && <div className="key-msg">{keySaveMsg}</div>}
+                </div>
+              )}
+
+              {coachLoading ? (
+                <div className="coach-spinner-box">
+                  <span className="coach-spinner" />
+                  <p>Comparing your telemetry against the Ideal Ghost benchmark...</p>
+                </div>
+              ) : coachData ? (
+                <div className="coach-results">
+                  <div className="coach-report-box">
+                    <div className="briefing-header">
+                      <h3>RACE ENGINEER RADIO · SECTOR {coachData.nextSector ?? 1} TARGET</h3>
+                      <span className="last-lap-tag">LAST COMPLETED LAP {coachData.lapNum ? `(#${coachData.lapNum})` : ""}</span>
+                    </div>
+                    <div className="coach-markdown-text">
+                      {coachData.advice.split("\n").map((line, idx) => {
+                        const trimmed = line.trim();
+                        if (!trimmed) return <div key={idx} className="briefing-spacer" />;
+                        if (trimmed.startsWith("###") || trimmed.startsWith("**SECTOR") || trimmed.startsWith("**NEXT")) {
+                          return <h4 key={idx} className="briefing-subhead">{trimmed.replace(/^[#*]+/, "").replace(/[*]+$/, "")}</h4>;
+                        }
+                        if (trimmed.startsWith("-") || trimmed.startsWith("*") || /^[0-9]\./.test(trimmed)) {
+                          return (
+                            <div key={idx} className="briefing-bullet">
+                              <span className="bullet-dot">▸</span>
+                              <span>{trimmed.replace(/^[-*0-9.]+\s*/, "")}</span>
+                            </div>
+                          );
+                        }
+                        return <p key={idx}>{trimmed}</p>;
+                      })}
+                    </div>
+                  </div>
+
+                  {coachData.deltas && coachData.deltas.length > 0 && (
+                    <div className="coach-deltas-section">
+                      <h3>SECTOR {coachData.nextSector ?? 1} CORNER DELTAS VS IDEAL GHOST</h3>
+                      <div className="deltas-grid">
+                        {coachData.deltas.slice(0, 6).map((delta) => (
+                          <div key={delta.turn} className={`delta-card ${delta.time_loss_s > 0.15 ? "loss-high" : ""}`}>
+                            <div className="delta-card-top">
+                              <span className="delta-turn">T{delta.turn} {delta.name}</span>
+                              <span className={`delta-loss-badge ${delta.time_loss_s > 0.1 ? "badge-red" : "badge-green"}`}>
+                                {delta.time_loss_s > 0 ? `+${delta.time_loss_s.toFixed(2)}s` : "ON PACE"}
+                              </span>
+                            </div>
+                            <div className="delta-diag">{delta.diagnosis}</div>
+                            <div className="delta-stats">
+                              <div><span>Ghost Apex:</span> <b>{delta.ideal_apex_speed_kph} km/h (G{delta.ideal_apex_gear})</b></div>
+                              <div><span>Your Apex:</span> <b>{delta.player_min_speed_kph} km/h</b></div>
+                              {isNumber(delta.brake_delta_m) && (
+                                <div><span>Braking:</span> <b>{delta.brake_delta_m! > 0 ? `${Math.round(delta.brake_delta_m!)}m early` : `${Math.abs(Math.round(delta.brake_delta_m!))}m late`}</b></div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p>Click "Run Coach" to evaluate your telemetry.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </main>
   );
 }
