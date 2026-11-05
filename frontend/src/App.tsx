@@ -982,76 +982,6 @@ function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, delta
   );
 }
 
-function parseCornerAdvice(rawAdvice: string): Array<{ turnTag: string; advice: string; isTurn: boolean }> {
-  if (!rawAdvice) return [];
-  const lines = rawAdvice.split("\n").map((l) => l.trim()).filter(Boolean);
-
-  const items: Array<{ turnTag: string; advice: string; isTurn: boolean }> = [];
-  let currentTag: string | null = null;
-  let currentParts: string[] = [];
-
-  const flush = () => {
-    if (currentTag) {
-      const text = currentParts.filter(Boolean).join(" ").trim().replace(/^[#*•\s-]+/, "");
-      // Completely discard empty advice strings
-      if (text) {
-        items.push({ turnTag: currentTag, advice: text, isTurn: true });
-      }
-    }
-    currentTag = null;
-    currentParts = [];
-  };
-
-  for (const rawLine of lines) {
-    let line = rawLine.trim();
-    if (!line) continue;
-    // Strip bolding and leading/trailing markdown hashes
-    line = line.replace(/\*\*/g, "").replace(/__/g, "");
-    const lineClean = line.replace(/^[#\s]+/, "").replace(/[#\s]+$/, "").trim();
-    if (!lineClean) continue;
-
-    // Discard generic section headers, empty notes, and markdown markers
-    if (/^(?:sector\s*\d+\s*(?:summary|fixes)?|summary|corner-by-corner\s*fixes|fixes|notes?)\b/i.test(lineClean)) {
-      continue;
-    }
-
-    // Match Turn with or without colon: "Turn 15 (Name): advice" or "Turn 15 (Name)" or "T15: advice"
-    const turnMatch = lineClean.match(/^(?:[-*•\s]*)(Turns?\s+[\d–-]+(?:\s*\([^)]+\))?)\s*(?::\s*(.*))?$/i);
-    if (turnMatch) {
-      flush();
-      currentTag = turnMatch[1].trim();
-      const afterColon = (turnMatch[2] || "").trim();
-      if (afterColon) {
-        currentParts.push(afterColon);
-      }
-      continue;
-    }
-
-    if (currentTag) {
-      // Sub-bullet under current turn
-      const subMatch = lineClean.match(/^(?:[-*•\s]*)([^:]+):\s*(.*)$/);
-      if (subMatch && ["braking", "braking/entry", "entry", "apex speed", "apex speed & gear", "apex speed and gear", "apex", "exit throttle", "throttle", "exit", "gear", "line"].includes(subMatch[1].toLowerCase().trim())) {
-        currentParts.push(subMatch[2].trim());
-      } else {
-        currentParts.push(lineClean.replace(/^[-*•#\s]+/, ""));
-      }
-    } else {
-      // General engineer note (NOT a turn)
-      const cleanedGeneral = lineClean.replace(/^[-*•#\s]+/, "").trim();
-      if (cleanedGeneral.length > 5 && !/^(?:note|fixes|summary)/i.test(cleanedGeneral)) {
-        items.push({
-          turnTag: "ENGINEER TIP",
-          advice: cleanedGeneral,
-          isTurn: false,
-        });
-      }
-    }
-  }
-
-  flush();
-  return items;
-}
-
 function App() {
   const { snapshot, state, lastMessageAt } = useTelemetry();
   const [plot, setPlot] = useState<PlotPoint[]>([]);
@@ -1494,13 +1424,23 @@ function App() {
                       <h3>RACE ENGINEER RADIO · SECTOR {coachData.nextSector ?? 1} TARGET</h3>
                       <span className="last-lap-tag">LAST COMPLETED LAP {coachData.lapNum ? `(#${coachData.lapNum})` : ""}</span>
                     </div>
-                    <div className="coach-corner-advice-container">
-                      {parseCornerAdvice(coachData.advice).map((item, idx) => (
-                        <div key={idx} className={`coach-corner-advice-row ${item.isTurn ? "is-turn" : "is-tip"}`}>
-                          <span className={`coach-corner-pill ${item.isTurn ? "pill-turn" : "pill-tip"}`}>{item.turnTag}:</span>
-                          <span className="coach-corner-advice-body">{item.advice}</span>
-                        </div>
-                      ))}
+                    <div className="coach-markdown-text">
+                      {coachData.advice.split("\n").map((line, idx) => {
+                        const trimmed = line.trim();
+                        if (!trimmed) return <div key={idx} className="briefing-spacer" />;
+                        if (trimmed.startsWith("###") || trimmed.startsWith("**SECTOR") || trimmed.startsWith("**NEXT") || trimmed.startsWith("**CORNER") || trimmed.startsWith("**FIXES")) {
+                          return <h4 key={idx} className="briefing-subhead">{trimmed.replace(/^[#*]+/, "").replace(/[*:]+$/, "")}</h4>;
+                        }
+                        if (trimmed.startsWith("-") || trimmed.startsWith("*") || /^[0-9]\./.test(trimmed)) {
+                          return (
+                            <div key={idx} className="briefing-bullet">
+                              <span className="bullet-dot">▸</span>
+                              <span>{trimmed.replace(/^[-*0-9.]+\s*/, "")}</span>
+                            </div>
+                          );
+                        }
+                        return <p key={idx}>{trimmed}</p>;
+                      })}
                     </div>
                   </div>
 
