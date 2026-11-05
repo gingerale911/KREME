@@ -9,3 +9,6 @@ captures/
 data/
 frontend/node_modules/
 F1 25 Telemetry Output Structures.txt
+
+.env
+*.env*
