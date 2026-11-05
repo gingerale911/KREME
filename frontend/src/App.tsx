@@ -562,9 +562,11 @@ interface CoachMiniMapProps {
   trackBenchmark?: CoachAnalysisResponse["track"];
   nextSector: number;
   deltas?: CornerDeltaUI[];
+  allDeltas?: CornerDeltaUI[];
+  advice?: string;
 }
 
-function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, deltas = [] }: CoachMiniMapProps) {
+function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, deltas = [], allDeltas = [], advice = "" }: CoachMiniMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<{
     turn: string;
@@ -657,34 +659,78 @@ function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, delta
 
   const trackLength = Number(trackBenchmark?.track_length_m || circuit?.game_track_length_m || 5000);
 
-  // Focus sector corners
+  // Focus sector corners with cross-referenced pace and telemetry check
   const targetCorners = useMemo(() => {
     const benchCorners = (trackBenchmark?.corners ?? []).filter((c) => c.sector === nextSector);
-    if (benchCorners.length > 0) {
-      return benchCorners.map((bc) => {
-        const delta = deltas.find((d) => String(d.turn) === String(bc.turn));
-        return {
-          turn: String(bc.turn),
-          name: bc.name && bc.name !== `Turn ${bc.turn}` ? bc.name : "",
-          start_m: bc.start_m,
-          end_m: bc.end_m,
-          apex_m: bc.apex_m,
-          sector: bc.sector,
-          delta,
-        };
-      });
-    }
-    // Fallback if no benchCorners: use deltas directly
-    return deltas.map((d) => ({
-      turn: String(d.turn),
-      name: d.name && d.name !== `Turn ${d.turn}` ? d.name : "",
-      start_m: Math.max(0, d.apex_m - 45),
-      end_m: d.apex_m + 45,
-      apex_m: d.apex_m,
-      sector: d.sector || nextSector,
-      delta: d,
-    }));
-  }, [trackBenchmark, nextSector, deltas]);
+    const sourceList = benchCorners.length > 0 ? benchCorners : deltas;
+
+    return sourceList.map((corner: any) => {
+      const turnStr = String(corner.turn || "");
+      const matchingDelta = (deltas ?? []).find((d) => {
+        const dTurn = String(d.turn || "");
+        if (dTurn === turnStr) return true;
+        const rangeMatch = dTurn.match(/(\d+)\s*[-–]\s*(\d+)/);
+        if (rangeMatch) {
+          const start = parseInt(rangeMatch[1], 10);
+          const end = parseInt(rangeMatch[2], 10);
+          const cur = parseInt(turnStr, 10);
+          return cur >= start && cur <= end;
+        }
+        return false;
+      }) || (allDeltas ?? []).find((d) => String(d.turn) === turnStr);
+
+      let needsImprovement = false;
+      let timeLoss = matchingDelta ? Number(matchingDelta.time_loss_s || 0) : 0;
+
+      if (matchingDelta) {
+        const diag = (matchingDelta.diagnosis || "").toLowerCase();
+        const hasDeficitDiag = Boolean(diag && !diag.includes("clean") && !diag.includes("optimal"));
+        const hasBrakeDelta = matchingDelta.brake_delta_m !== undefined && matchingDelta.brake_delta_m !== null && Math.abs(matchingDelta.brake_delta_m) >= 10;
+        const hasApexDelta = matchingDelta.apex_speed_delta_kph !== undefined && matchingDelta.apex_speed_delta_kph <= -8;
+        const hasThrottleDelta = matchingDelta.throttle_delta_m !== undefined && matchingDelta.throttle_delta_m !== null && matchingDelta.throttle_delta_m >= 10;
+
+        if (timeLoss > 0.03 || hasDeficitDiag || hasBrakeDelta || hasApexDelta || hasThrottleDelta) {
+          needsImprovement = true;
+        }
+      }
+
+      if (advice) {
+        const adviceLines = advice.split("\n");
+        for (const line of adviceLines) {
+          const lineLower = line.toLowerCase();
+          const turnMatch = lineLower.match(/turns?\s*(\d+)(?:\s*[-–]\s*(\d+))?/i);
+          if (turnMatch) {
+            const t1 = parseInt(turnMatch[1], 10);
+            const t2 = turnMatch[2] ? parseInt(turnMatch[2], 10) : t1;
+            const curTurn = parseInt(turnStr, 10);
+            if (curTurn >= t1 && curTurn <= t2) {
+              if (!lineLower.includes("on pace") && (
+                lineLower.includes("brake") || lineLower.includes("push") || lineLower.includes("target") ||
+                lineLower.includes("shift") || lineLower.includes("lift") || lineLower.includes("throttle") ||
+                lineLower.includes("deeper") || lineLower.includes("earlier") || lineLower.includes("drop") ||
+                lineLower.includes("bleed") || lineLower.includes("loss") || lineLower.includes("overslow")
+              )) {
+                needsImprovement = true;
+                if (timeLoss === 0) timeLoss = 0.15;
+              }
+            }
+          }
+        }
+      }
+
+      return {
+        turn: turnStr,
+        name: corner.name && corner.name !== `Turn ${turnStr}` ? corner.name : "",
+        start_m: corner.start_m ?? Math.max(0, (corner.apex_m || 100) - 45),
+        end_m: corner.end_m ?? ((corner.apex_m || 100) + 45),
+        apex_m: corner.apex_m || 100,
+        sector: corner.sector || nextSector,
+        delta: matchingDelta,
+        needsImprovement,
+        timeLoss,
+      };
+    });
+  }, [trackBenchmark, nextSector, deltas, allDeltas, advice]);
 
   // Non-target sector corners (for subtle muted circuit reference)
   const otherCorners = useMemo(() => {
@@ -706,16 +752,12 @@ function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, delta
     const rect = containerRef.current.getBoundingClientRect();
     const relX = e.clientX - rect.left;
     const relY = e.clientY - rect.top;
-    const timeLoss = corner.delta ? Number(corner.delta.time_loss_s) : 0;
-    const needsImprovement =
-      timeLoss > 0.05 ||
-      (corner.delta?.diagnosis && !corner.delta.diagnosis.toLowerCase().includes("optimal") && timeLoss > 0.02);
 
     setHovered({
       turn: corner.turn,
       name: corner.name,
-      needsImprovement: Boolean(needsImprovement),
-      timeLoss,
+      needsImprovement: Boolean(corner.needsImprovement),
+      timeLoss: Number(corner.timeLoss || 0),
       delta: corner.delta,
       x: Math.min(Math.max(relX, 120), rect.width - 120),
       y: Math.max(relY - 14, 12),
@@ -794,11 +836,7 @@ function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, delta
               : [...rotatedRacingLine.slice(sIdx), ...rotatedRacingLine.slice(0, eIdx + 1)];
             const cornerD = toSvgPath(slice, bounds.project, false);
 
-            const timeLoss = tc.delta ? Number(tc.delta.time_loss_s) : 0;
-            const needsImprovement =
-              timeLoss > 0.05 ||
-              (tc.delta?.diagnosis && !tc.delta.diagnosis.toLowerCase().includes("optimal") && timeLoss > 0.02);
-            const color = needsImprovement ? "#ef4444" : "#10b981";
+            const color = tc.needsImprovement ? "#ef4444" : "#10b981";
 
             return (
               <path
@@ -823,11 +861,7 @@ function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, delta
             apexIdx = Math.max(0, Math.min(N - 1, apexIdx));
             const pt = bounds.project(rotatedRacingLine[apexIdx]);
 
-            const timeLoss = tc.delta ? Number(tc.delta.time_loss_s) : 0;
-            const needsImprovement =
-              timeLoss > 0.05 ||
-              (tc.delta?.diagnosis && !tc.delta.diagnosis.toLowerCase().includes("optimal") && timeLoss > 0.02);
-            const color = needsImprovement ? "#ef4444" : "#10b981";
+            const color = tc.needsImprovement ? "#ef4444" : "#10b981";
 
             return (
               <g
@@ -886,6 +920,58 @@ function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, delta
       </div>
     </div>
   );
+}
+
+function parseCornerAdvice(rawAdvice: string): Array<{ turnTag: string; advice: string }> {
+  if (!rawAdvice) return [];
+  const cleaned = rawAdvice.replace(/\*\*/g, "").replace(/__/g, "");
+  const lines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
+
+  const items: Array<{ turnTag: string; advice: string }> = [];
+  let currentTag: string | null = null;
+  let currentParts: string[] = [];
+
+  for (const line of lines) {
+    const match = line.match(/^(?:[-*•]\s*)?(Turns?\s+[\d–-]+(?:\s*\([^)]+\))?)\s*:\s*(.*)$/i);
+    if (match) {
+      if (currentTag) {
+        items.push({ turnTag: currentTag, advice: currentParts.join(" ") });
+      }
+      currentTag = match[1].trim();
+      const rest = match[2].trim();
+      currentParts = rest ? [rest] : [];
+    } else if (currentTag) {
+      const subMatch = line.match(/^(?:[-*•]\s*)?([^:]+):\s*(.*)$/);
+      if (subMatch && ["braking", "braking/entry", "apex speed", "apex speed & gear", "apex speed and gear", "exit throttle", "throttle", "gear", "line"].includes(subMatch[1].toLowerCase().trim())) {
+        currentParts.push(subMatch[2].trim());
+      } else if (!/^(?:sector|summary|fixes|notes)/i.test(line)) {
+        currentParts.push(line.replace(/^[-*•\s]+/, ""));
+      }
+    }
+  }
+  if (currentTag) {
+    items.push({ turnTag: currentTag, advice: currentParts.join(" ") });
+  }
+
+  if (items.length === 0) {
+    for (const line of lines) {
+      if (/^(?:sector|summary|fixes)/i.test(line)) continue;
+      const colonIdx = line.indexOf(":");
+      if (colonIdx > 0 && colonIdx < 30) {
+        items.push({
+          turnTag: line.slice(0, colonIdx).trim(),
+          advice: line.slice(colonIdx + 1).trim(),
+        });
+      } else {
+        items.push({
+          turnTag: "Note",
+          advice: line.replace(/^[-*•\s]+/, ""),
+        });
+      }
+    }
+  }
+
+  return items;
 }
 
 function App() {
@@ -964,6 +1050,32 @@ function App() {
       setCoachLoading(false);
     }
   };
+    const displayDeltas = useMemo(() => {
+    if (coachData?.deltas && coachData.deltas.length > 0) {
+      return coachData.deltas;
+    }
+    const sec = coachData?.nextSector ?? 1;
+    const corners = (coachData?.track?.corners ?? []).filter((c) => c.sector === sec);
+    return corners.map((c): CornerDeltaUI => ({
+      turn: String(c.turn),
+      name: c.name || `Turn ${c.turn}`,
+      apex_m: c.apex_m,
+      sector: c.sector,
+      ideal_brake_m: c.ideal_brake_m ?? Math.max(0, c.apex_m - 80),
+      ideal_apex_speed_kph: c.ideal_apex_speed_kph ?? 120,
+      ideal_apex_gear: c.ideal_apex_gear ?? 3,
+      player_min_speed_kph: 0,
+      apex_speed_delta_kph: 0,
+      time_loss_s: 0,
+      diagnosis: c.notes || "Ideal Ghost Target",
+      notes: c.notes || "",
+      player_brake_on_m: null,
+      player_throttle_on_m: null,
+      brake_delta_m: null,
+      throttle_delta_m: null,
+    }));
+  }, [coachData]);
+
   const cars = Array.isArray(shown?.cars) ? shown.cars : [];
   const lapHistory = Array.isArray(snapshot?.laps) ? snapshot.laps : [];
 
@@ -1305,61 +1417,58 @@ function App() {
                       <span className="last-lap-tag">LAST COMPLETED LAP {coachData.lapNum ? `(#${coachData.lapNum})` : ""}</span>
                     </div>
                     <div className="coach-corner-advice-container">
-                      {coachData.advice
-                        .split("\n")
-                        .map((line) => line.trim())
-                        .filter(Boolean)
-                        .map((line, idx) => {
-                          const match = line.match(/^(?:[-*•]\s*)?((?:turn|t)\s*\d+[^:]*):\s*(.*)$/i);
-                          if (match) {
-                            return (
-                              <div key={idx} className="coach-corner-advice-row">
-                                <span className="coach-corner-pill">{match[1]}:</span>
-                                <span className="coach-corner-advice-body">{match[2]}</span>
-                              </div>
-                            );
-                          }
-                          return (
-                            <div key={idx} className="coach-corner-advice-row general">
-                              <span className="coach-corner-advice-body">{line.replace(/^[#*-•]+\s*/, "")}</span>
-                            </div>
-                          );
-                        })}
+                      {parseCornerAdvice(coachData.advice).map((item, idx) => (
+                        <div key={idx} className="coach-corner-advice-row">
+                          <span className="coach-corner-pill">{item.turnTag}:</span>
+                          <span className="coach-corner-advice-body">{item.advice}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
 
-                  {coachData.deltas && coachData.deltas.length > 0 && (
+                  {/* Tile format comparing Ghost Benchmark vs Player - always before Circuit Map */}
+                  {displayDeltas.length > 0 && (
                     <div className="coach-deltas-section">
                       <h3>SECTOR {coachData.nextSector ?? 1} CORNER DELTAS VS IDEAL GHOST</h3>
                       <div className="deltas-grid">
-                        {coachData.deltas.slice(0, 6).map((delta) => (
-                          <div key={delta.turn} className={`delta-card ${delta.time_loss_s > 0.15 ? "loss-high" : ""}`}>
-                            <div className="delta-card-top">
-                              <span className="delta-turn">T{delta.turn} {delta.name}</span>
-                              <span className={`delta-loss-badge ${delta.time_loss_s > 0.1 ? "badge-red" : "badge-green"}`}>
-                                {delta.time_loss_s > 0 ? `+${delta.time_loss_s.toFixed(2)}s` : "ON PACE"}
-                              </span>
+                        {displayDeltas.slice(0, 8).map((delta) => {
+                          const isLoss = delta.time_loss_s > 0.05;
+                          return (
+                            <div key={delta.turn} className={`delta-card ${isLoss ? "loss-high" : ""}`}>
+                              <div className="delta-card-top">
+                                <span className="delta-turn">T{delta.turn} {delta.name}</span>
+                                <span className={`delta-loss-badge ${isLoss ? "badge-red" : "badge-green"}`}>
+                                  {delta.time_loss_s > 0 ? `+${delta.time_loss_s.toFixed(2)}s` : "ON PACE"}
+                                </span>
+                              </div>
+                              <div className="delta-diag">{delta.diagnosis || "Clean execution on ideal line"}</div>
+                              <div className="delta-stats">
+                                <div><span>Ghost Apex:</span> <b>{delta.ideal_apex_speed_kph} km/h (G{delta.ideal_apex_gear})</b></div>
+                                {delta.player_min_speed_kph > 0 ? (
+                                  <div><span>Your Apex:</span> <b>{delta.player_min_speed_kph} km/h</b></div>
+                                ) : null}
+                                {isNumber(delta.brake_delta_m) ? (
+                                  <div><span>Braking:</span> <b>{delta.brake_delta_m! > 0 ? `${Math.round(delta.brake_delta_m!)}m early` : `${Math.abs(Math.round(delta.brake_delta_m!))}m late`}</b></div>
+                                ) : delta.ideal_brake_m > 0 ? (
+                                  <div><span>Ghost Brake:</span> <b>{Math.round(delta.ideal_brake_m)}m before apex</b></div>
+                                ) : null}
+                              </div>
                             </div>
-                            <div className="delta-diag">{delta.diagnosis}</div>
-                            <div className="delta-stats">
-                              <div><span>Ghost Apex:</span> <b>{delta.ideal_apex_speed_kph} km/h (G{delta.ideal_apex_gear})</b></div>
-                              <div><span>Your Apex:</span> <b>{delta.player_min_speed_kph} km/h</b></div>
-                              {isNumber(delta.brake_delta_m) && (
-                                <div><span>Braking:</span> <b>{delta.brake_delta_m! > 0 ? `${Math.round(delta.brake_delta_m!)}m early` : `${Math.abs(Math.round(delta.brake_delta_m!))}m late`}</b></div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
 
+                  {/* Circuit Map at the bottom */}
                   <CoachMiniMap
                     trackOutline={trackOutline}
                     circuit={coachData.circuit}
                     trackBenchmark={coachData.track}
                     nextSector={coachData.nextSector ?? 1}
                     deltas={coachData.deltas}
+                    allDeltas={coachData.allDeltas}
+                    advice={coachData.advice}
                   />
                 </div>
               ) : (

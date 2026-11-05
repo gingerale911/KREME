@@ -128,8 +128,9 @@ CORNERS IN {sector_str} FROM LAST LAP:
 
 INSTRUCTIONS:
 1. Provide your coaching strictly for every corner in {sector_str} in sequential order (Turn 1, Turn 2, etc.).
-2. Do NOT output any introductory text, pleasantries, summary headers, or conclusion paragraphs.
-3. Strictly format each line as:
+2. Do NOT output any introductory text, pleasantries, summary headers (do NOT write "SUMMARY" or "FIXES"), or conclusion paragraphs.
+3. Do NOT use markdown bold asterisks (**) or bullet points. Output strictly plain text.
+4. Output strictly one plain-text line per corner:
 Turn <N> (<Turn Name if available>): <1-2 sentences of direct technical correction. Specify braking adjustment (in meters deeper/earlier), target apex speed (km/h) and gear, and exit throttle timing. If the driver is already on pace with no significant time loss, state "On pace — maintain entry line and carry {ideal_speed} km/h in gear {ideal_gear}.">
 
 EXAMPLE OUTPUT FORMAT:
@@ -164,6 +165,48 @@ def format_fallback_corner_advice(target_corners: list[CornerDelta]) -> str:
     return "\n".join(lines)
 
 
+def clean_gemini_corner_advice(raw_text: str, fallback_corners: list[CornerDelta]) -> str:
+    """Clean markdown asterisks, strip headers, and normalize into single lines per turn."""
+    if not raw_text or not raw_text.strip():
+        return format_fallback_corner_advice(fallback_corners)
+
+    # Remove bold markdown ** or __
+    cleaned = raw_text.replace("**", "").replace("__", "")
+    lines = [l.strip() for l in cleaned.splitlines() if l.strip()]
+
+    turns: list[tuple[str, str]] = []
+    current_turn: str | None = None
+    current_parts: list[str] = []
+
+    for line in lines:
+        # Match "Turn 1:" or "Turn 1 (Name):" or "Turns 2-4 (Name):"
+        m = re.match(r"^(Turns?\s+[\d–-]+(?:\s*\([^)]+\))?)\s*:\s*(.*)$", line, re.IGNORECASE)
+        if m:
+            if current_turn:
+                turns.append((current_turn, " ".join(current_parts)))
+            current_turn = m.group(1).strip()
+            rest = m.group(2).strip()
+            current_parts = [rest] if rest else []
+        elif current_turn:
+            # Sub-bullet like "Braking: Push braking..." or "Apex Speed: ..."
+            sub_m = re.match(r"^(?:[-*•]\s*)?([^:]+):\s*(.*)$", line)
+            if sub_m and sub_m.group(1).lower().strip() in [
+                "braking", "braking/entry", "apex speed", "apex speed & gear",
+                "apex speed and gear", "exit throttle", "throttle", "gear", "line"
+            ]:
+                current_parts.append(sub_m.group(2).strip())
+            elif not re.match(r"^(?:sector|summary|fixes|notes)", line, re.IGNORECASE):
+                current_parts.append(line.lstrip("-*• "))
+
+    if current_turn:
+        turns.append((current_turn, " ".join(current_parts)))
+
+    if not turns:
+        return format_fallback_corner_advice(fallback_corners)
+
+    return "\n".join(f"{turn}: {advice}" for turn, advice in turns)
+
+
 def generate_coach_advice(
     track: TrackBenchmark,
     player_lap_time_ms: int,
@@ -196,7 +239,7 @@ def generate_coach_advice(
                     contents=prompt,
                 )
                 if response and response.text:
-                    return response.text.strip()
+                    return clean_gemini_corner_advice(response.text.strip(), target_corners)
             except Exception as model_err:
                 last_error = model_err
                 logger.warning("Model %s failed: %s. Trying next...", model_name, model_err)
