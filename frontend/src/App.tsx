@@ -3,6 +3,8 @@ import LapComparePanel from "./components/LapComparePanel";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
+type DashboardTab = "live" | "laps" | "coach" | "settings";
+type CoachKeyState = "checking" | "connected" | "not-connected" | "unavailable";
 type MaybeNumber = number | null | undefined;
 
 interface Stats {
@@ -318,11 +320,14 @@ function useTelemetry() {
 function PanelHeading({ eyebrow, title, trailing }: { eyebrow: string; title: string; trailing?: React.ReactNode }) {
   return (
     <div className="panel-heading">
-      <div>
-        <div className="eyebrow">{eyebrow}</div>
+      <div className="panel-title-group">
+        <div className="panel-eyebrow">{eyebrow}</div>
         <h2>{title}</h2>
       </div>
-      {trailing && <div className="panel-trailing">{trailing}</div>}
+      <div className="panel-heading-end">
+        <span className="f1-stripe-marker" aria-hidden="true" />
+        {trailing && <div className="panel-trailing">{trailing}</div>}
+      </div>
     </div>
   );
 }
@@ -440,8 +445,8 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
         <rect width="1000" height="560" fill="url(#map-grid)" />
         {trackOutline && trackSurfacePath ? (
           <>
-            <path d={trackSurfacePath} fill="rgba(44, 180, 166, 0.12)" stroke="rgba(78, 220, 193, 0.9)" strokeWidth={1.1} />
-            <path d={trackRacingLine} fill="none" stroke="rgba(138, 173, 255, 0.72)" strokeWidth={1.2} strokeDasharray="4 4" />
+            <path d={trackSurfacePath} fill="rgba(152, 163, 177, 0.035)" stroke="#657181" strokeWidth={1.1} />
+            <path d={trackRacingLine} fill="none" stroke="#98A3B1" strokeWidth={1.2} strokeDasharray="4 4" opacity=".58" />
           </>
         ) : (
           hasTrack && path && (
@@ -489,14 +494,16 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
             <circle cx="500" cy="265" r="44" />
             <path d="M 500 221 L 500 199 M 478 265 L 455 265 M 522 265 L 545 265" />
             <text x="500" y="350">NO STATIC MAP</text>
-            <text x="500" y="375">Learned trace only · geometry unavailable</text>
+            <text x="500" y="375">{liveTracePoints.length ? "Live positions · trace building" : "Waiting for live car positions"}</text>
           </g>
         )}
       </svg>
-      <div className="map-scale">
-        <span className="map-legend-dot" /> LIVE CARS
-        <span className="map-legend-line" /> {staticTrackAvailable ? "POSITION TRACE" : "LEARNED TRACE"}
-      </div>
+      {(staticTrackAvailable || liveTracePoints.length > 1) && (
+        <div className="map-scale">
+          <span className="map-legend-dot" /> LIVE CARS
+          <span className="map-legend-line" /> {staticTrackAvailable ? "STATIC OUTLINE" : "LEARNED TRACE"}
+        </div>
+      )}
     </div>
   );
 }
@@ -545,15 +552,17 @@ function App() {
   const [mapHistory, setMapHistory] = useState<Position[]>([]);
   const [trackCatalog, setTrackCatalog] = useState<Record<number, TrackOutline>>({});
   const [trackOutline, setTrackOutline] = useState<TrackOutline | null>(null);
-  const [lightTheme, setLightTheme] = useState(false);
   const [selectedLap, setSelectedLap] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"live" | "laps">("live");
-  const [coachOpen, setCoachOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<DashboardTab>("live");
   const [coachLoading, setCoachLoading] = useState(false);
+  const [coachError, setCoachError] = useState("");
   const [coachData, setCoachData] = useState<CoachAnalysisResponse | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [keySaveMsg, setKeySaveMsg] = useState("");
+  const [keySaving, setKeySaving] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [coachKeyState, setCoachKeyState] = useState<CoachKeyState>("checking");
+  const [coachKeyError, setCoachKeyError] = useState("");
   const [now, setNow] = useState(Date.now());
   const lastSample = useRef<string>("");
   const lastGameTime = useRef<number | null>(null);
@@ -562,27 +571,49 @@ function App() {
 
   useEffect(() => {
     fetch("/api/coach/status")
-      .then((r) => r.json())
-      .then((d) => setHasApiKey(Boolean(d.hasApiKey)))
-      .catch(() => {});
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Coach status unavailable (${response.status})`);
+        return response.json() as Promise<{ hasApiKey?: unknown }>;
+      })
+      .then((data) => {
+        if (typeof data.hasApiKey !== "boolean") throw new Error("Coach status response was invalid");
+        setHasApiKey(data.hasApiKey);
+        setCoachKeyState(data.hasApiKey ? "connected" : "not-connected");
+      })
+      .catch((error: unknown) => {
+        setCoachKeyState("unavailable");
+        setCoachKeyError(error instanceof Error ? error.message : "Coach key status request failed");
+      });
   }, []);
 
   const saveApiKey = async () => {
     if (!apiKeyInput.trim()) return;
+    setKeySaving(true);
+    setKeySaveMsg("");
     try {
       const res = await fetch("/api/coach/key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ apiKey: apiKeyInput.trim() }),
       });
-      if (res.ok) {
-        setHasApiKey(true);
-        setKeySaveMsg("Saved! Rerun analysis to get Gemini insights.");
-        setApiKeyInput("");
-        setTimeout(() => setKeySaveMsg(""), 4000);
+      if (!res.ok) {
+        let message = `Unable to save API key (${res.status})`;
+        try {
+          const body = await res.json() as { detail?: unknown };
+          if (typeof body.detail === "string") message = body.detail;
+        } catch {
+          // Keep the status-based message when the server does not return JSON.
+        }
+        throw new Error(message);
       }
-    } catch (e) {
-      setKeySaveMsg("Failed to save key");
+      setHasApiKey(true);
+      setCoachKeyState("connected");
+      setKeySaveMsg("API key saved on the server.");
+      setApiKeyInput("");
+    } catch (error) {
+      setKeySaveMsg(error instanceof Error ? error.message : "Unable to save API key");
+    } finally {
+      setKeySaving(false);
     }
   };
   const stats = snapshot?.stats;
@@ -596,7 +627,8 @@ function App() {
 
   const runCoachAnalysis = async () => {
     setCoachLoading(true);
-    setCoachOpen(true);
+    setCoachError("");
+    setCoachData(null);
     try {
       const res = await fetch("/api/coach/analyse", {
         method: "POST",
@@ -606,11 +638,17 @@ function App() {
           lapNum: isNumber(player?.lapNum) && player.lapNum > 1 ? player.lapNum - 1 : undefined,
         }),
       });
-      const data = await res.json();
+      const data = await res.json() as CoachAnalysisResponse & { detail?: unknown };
+      if (!res.ok) {
+        throw new Error(typeof data.detail === "string" ? data.detail : `Analysis failed (${res.status})`);
+      }
+      if (typeof data.advice !== "string") {
+        throw new Error("The coach returned no analysis for the selected lap.");
+      }
       setCoachData(data);
       if (typeof data.hasApiKey === "boolean") setHasApiKey(data.hasApiKey);
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      setCoachError(error instanceof Error ? error.message : "Analysis request failed");
     } finally {
       setCoachLoading(false);
     }
@@ -737,266 +775,358 @@ function App() {
     }
   }, [lapHistory, latestLap, selectedLap]);
 
+  const pageCopy: Record<DashboardTab, { title: string; subtitle: string }> = {
+    live: { title: "LIVE DASHBOARD", subtitle: "REAL-TIME VEHICLE TELEMETRY" },
+    laps: { title: "LAP ANALYSIS", subtitle: "DISTANCE-ALIGNED COMPARISON" },
+    coach: { title: "AI COACH", subtitle: "LAST COMPLETED LAP ANALYSIS" },
+    settings: { title: "SETTINGS", subtitle: "CONNECTION HELP & DIAGNOSTICS" },
+  };
+  const navItems: { id: DashboardTab; label: string }[] = [
+    { id: "live", label: "01 LIVE" },
+    { id: "laps", label: "02 LAP ANALYSIS" },
+    { id: "coach", label: "03 AI COACH" },
+    { id: "settings", label: "04 SETTINGS" },
+  ];
+  const keyStatusLabel = coachKeyState === "checking"
+    ? "CHECKING"
+    : coachKeyState === "connected"
+      ? "CONNECTED"
+      : coachKeyState === "not-connected"
+        ? "NOT CONFIGURED"
+        : "STATUS UNAVAILABLE";
+  const coachKeyPanel = (
+    <section className={`coach-key-panel f1-panel ${hasApiKey ? "" : "coach-key-panel--warning"}`}>
+      <div className="section-heading">
+        <div>
+          <span className="panel-eyebrow">SERVER-SIDE CREDENTIAL</span>
+          <h2>AI coach key</h2>
+        </div>
+        <span className={`panel-chip ${hasApiKey ? "text-green" : ""}`}>{keyStatusLabel}</span>
+      </div>
+      {coachKeyState === "checking" ? (
+        <p className="muted-copy">Checking the server-side key status…</p>
+      ) : hasApiKey ? (
+        <p className="muted-copy">A key is configured on the server. It is not stored in this browser.</p>
+      ) : (
+        <>
+          <p className="muted-copy">
+            {coachKeyState === "unavailable"
+              ? `Key status could not be checked${coachKeyError ? `: ${coachKeyError}` : ""}. You can still submit a key to the server.`
+              : "Add a Gemini API key to enable analysis. The key is sent only to the server and is not saved in browser storage."}
+          </p>
+          <label className="coach-key-label" htmlFor="coach-api-key">GEMINI API KEY</label>
+          <div className="coach-key-inputs">
+            <input
+              id="coach-api-key"
+              type="password"
+              autoComplete="new-password"
+              placeholder="Enter Gemini API key"
+              value={apiKeyInput}
+              onChange={(event) => setApiKeyInput(event.target.value)}
+            />
+            <button type="button" onClick={saveApiKey} disabled={keySaving || !apiKeyInput.trim()}>
+              {keySaving ? "SAVING..." : "SAVE KEY"}
+            </button>
+          </div>
+        </>
+      )}
+      {keySaveMsg && <p className={`key-msg ${hasApiKey ? "text-green" : "text-red"}`} role="status">{keySaveMsg}</p>}
+    </section>
+  );
+  const chartState = connected ? "ROLLING" : feedLabel;
+  const pageTrackLabel = session?.trackName || "WAITING FOR SESSION";
+  const feedWarning = paused || feedLabel === "STALE" || feedLabel === "WAITING FOR UDP";
+  const disconnectedFeed = feedLabel === "DISCONNECTED";
+
   return (
-    <main className={lightTheme ? "dashboard theme-light" : "dashboard"}>
-      <header className="topbar">
-        <a className="brand" href="#" aria-label="KREM dashboard home">
-          <span className="brand-mark"><i /><i /><i /></span>
-          <span>KREM<span className="brand-sub">TELEMETRY</span></span>
-        </a>
-        <div className="topbar-center">
-          <span className="live-indicator" />
-          <span>{session?.trackName || "WAITING FOR SESSION"}</span>
+    <main className="dashboard">
+      <header className={`app-header ${disconnectedFeed ? "app-header--disconnected" : ""}`}>
+        <button className="brand" type="button" onClick={() => setActiveTab("live")} aria-label="K.R.E.M.E. dashboard home">
+          <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
+          <span>K.R.E.M.E.<span className="brand-sub">TELEMETRY</span></span>
+        </button>
+        <div className="app-header-center">
+          <span>{pageTrackLabel}</span>
           {isNumber(player?.position) && <span className="position-pill">P{player.position}</span>}
         </div>
-        <div className="topbar-actions">
-          <button className="theme-toggle" onClick={() => setLightTheme((value) => !value)} aria-label="Toggle color theme">
-            {lightTheme ? "☾" : "☼"}
-          </button>
-          <div className={`connection ${connected ? "is-live" : ""}`}>
-            <span className="connection-dot" />
-            <span>{feedLabel}</span>
-          </div>
+        <div className={`connection-state ${connected ? "is-connected" : paused ? "is-paused" : feedWarning ? "is-warning" : ""}`}>
+          <span className="connection-dot" />
+          <span>{feedLabel}</span>
         </div>
       </header>
 
-      <div className="status-strip">
-        <div className="status-item"><span className="status-label">FEED</span><strong className={connected ? "text-green" : "text-amber"}>{feedLabel}</strong></div>
-        <div className="status-item"><span className="status-label">PACKETS / SEC</span><strong>{displayNumber(stats?.packetsPerSecond)}</strong></div>
-        <div className="status-item"><span className="status-label">FRAME GAPS</span><strong className={(stats?.frameGaps ?? 0) > 0 ? "text-amber" : ""}>{displayNumber(stats?.frameGaps)}</strong></div>
-        <div className="status-item status-wide"><span className="status-label">FORMAT</span><strong>F1 25 · 2025</strong></div>
-        <div className="status-tabs" aria-label="Dashboard views">
-          <button className={activeTab === "live" ? "status-tab active" : "status-tab"} onClick={() => setActiveTab("live")}>Live</button>
-          <button className={activeTab === "laps" ? "status-tab active" : "status-tab"} onClick={() => setActiveTab("laps")}>Lap compare</button>
-        </div>
-        <div className="status-event"><span className="event-pulse" />{eventText || "READY FOR RACE CONTROL EVENTS"}</div>
-      </div>
+      <section className="connection-strip" aria-label="Telemetry connection diagnostics">
+        <div className="connection-cell"><span>FEED</span><strong className={connected ? "text-green" : feedWarning ? "text-amber" : ""}>{feedLabel}</strong></div>
+        <div className="connection-cell"><span>PACKETS / SEC</span><strong>{displayNumber(stats?.packetsPerSecond)}</strong></div>
+        <div className="connection-cell"><span>FRAME GAPS</span><strong className={isNumber(stats?.frameGaps) && stats.frameGaps > 0 ? "text-amber" : ""}>{displayNumber(stats?.frameGaps)}</strong></div>
+        <div className="connection-cell"><span>FORMAT</span><strong>F1 25 · 2025</strong></div>
+        {eventText && <div className="connection-event"><span className="event-pulse" />{eventText}</div>}
+      </section>
 
-      {!connected && (
-        <div className="connection-banner" role="status">
-          <span className="banner-icon">!</span>
-          <div>
-            <strong>{paused ? "Game paused — readings and traces frozen" : snapshot?.telemetrySample ? "Live feed unavailable — showing last received readings" : "Waiting for F1 25 telemetry"}</strong>
-            <span>{paused ? "Inspect the existing traces at any point. Updates continue when the game resumes."
-              : snapshot?.telemetrySample ? "Retained values are not live. No new graph samples are added until telemetry resumes."
-              : "Configure F1 25 to send UDP telemetry using format 2025 to port 20777."}</span>
+      <nav className="primary-nav" aria-label="Dashboard pages">
+        {navItems.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={activeTab === item.id ? "nav-tab is-active" : "nav-tab"}
+            aria-current={activeTab === item.id ? "page" : undefined}
+            onClick={() => setActiveTab(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
+
+      <section className="page-heading">
+        <div>
+          <span className="page-kicker">{pageTrackLabel}{isNumber(player?.position) ? ` · P${player.position}` : ""}</span>
+          <h1>{pageCopy[activeTab].title}</h1>
+          <p>{pageCopy[activeTab].subtitle}</p>
+        </div>
+        <span className={`page-state ${connected ? "text-green" : feedWarning ? "text-amber" : ""}`}>
+          <i className="state-dot" />{feedLabel}
+        </span>
+      </section>
+
+      <div className="page-content">
+        {!connected && activeTab === "live" && (
+          <div className={`connection-banner ${paused ? "connection-banner--paused" : ""}`} role="status">
+            <span className="banner-icon">!</span>
+            <div>
+              <strong>{paused ? "Game paused · readings and traces frozen" : snapshot?.telemetrySample ? "Feed unavailable · showing retained readings" : "Waiting for F1 25 telemetry"}</strong>
+              <span>{paused
+                ? "Existing values and traces are retained until telemetry resumes."
+                : snapshot?.telemetrySample
+                  ? "Retained values are not live. New samples are added only when telemetry resumes."
+                  : "Configure F1 25 to send UDP telemetry in format 2025 to port 20777."}</span>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {activeTab === "live" ? (
-        <section className="dashboard-grid">
-          <article className="panel panel-map">
-            <PanelHeading eyebrow="01 / TRACK POSITION" title={session?.trackName || "Live track map"} trailing={<span className="panel-chip">{cars.length ? `${cars.length} CARS` : "NO CARS"}</span>} />
-            <div className="map-meta">
-              <span>{displayNumber(session?.trackLength)} <small>M TRACK</small></span>
-              <span>{distance === null ? "—" : `${Math.max(0, distance).toFixed(0)} m`} <small>LAP DISTANCE</small></span>
-              <span>{displayNumber(player?.speed)} <small>KM/H</small></span>
-            </div>
-            <TrackMap cars={cars} history={mapHistory} player={player} trackOutline={trackOutline} />
-            <div className="panel-foot"><span><i className="legend-live" />PLAYER POSITION</span><span>WORLD X / Z</span></div>
-          </article>
-
-          <article className="panel panel-timing">
-            <PanelHeading eyebrow="02 / LAP ANALYSIS" title="Sectors & timing" trailing={isNumber(player?.lapNum) ? <span className="lap-badge">LAP {player.lapNum}</span> : undefined} />
-            <div className="timing-main">
-              <div className="timer-block"><span className="eyebrow">CURRENT LAP</span><strong>{formatTime(player?.lapTime)}</strong><span className="timer-status">{player?.invalid ? "INVALID LAP" : currentSector ? `IN SECTOR ${currentSector}` : "WAITING FOR LAP"}</span></div>
-              <div className="position-large"><span>POSITION</span><strong>{isNumber(player?.position) ? `P${player.position}` : "—"}</strong></div>
-            </div>
-            <div className="sector-track" aria-label="Three sector timing progress">
-              {[1, 2, 3].map((sector) => (
-                <div key={sector} className={`sector-segment ${currentSector === sector ? "sector-current" : currentSector && currentSector > sector ? "sector-complete" : ""}`}>
-                  <span>S{sector}</span>
-                  <strong>{formatTime(sector === 1 ? player?.sector1TimeMs : sector === 2 ? player?.sector2TimeMs : player?.sector3TimeMs)}</strong>
-                  {sector < 3 && <i className="sector-divider" />}
-                </div>
-              ))}
-            </div>
-            <div className="timing-details">
-              <div><span>LAP DISTANCE</span><strong>{distance === null ? "—" : `${Math.max(0, distance).toFixed(0)} m`}</strong></div>
-              <div><span>RACE LAPS</span><strong>{isNumber(session?.totalLaps) ? `${isNumber(player?.lapNum) ? player.lapNum : "—"} / ${session.totalLaps}` : "—"}</strong></div>
-              <div><span>LAP INVALID</span><strong className={player?.invalid == null ? "" : player.invalid ? "text-red" : "text-green"}>{player?.invalid == null ? "—" : player.invalid ? "YES" : "NO"}</strong></div>
-            </div>
-            <div className="timing-session">
-              <div><span>TRACK</span><strong>{session?.trackName || "—"}</strong></div>
-              <div><span>WEATHER</span><strong>{session?.weather ?? "—"}</strong></div>
-              <div><span>TRACK TEMP</span><strong>{displayNumber(session?.trackTemp, 0, "°")}</strong></div>
-              <div><span>AIR TEMP</span><strong>{displayNumber(session?.airTemp, 0, "°")}</strong></div>
-            </div>
-          </article>
-
-          <article className="panel panel-charts">
-            <PanelHeading eyebrow="03 / DRIVER INPUT" title="Telemetry traces" trailing={<span className="window-label">{frozen ? feedLabel : "ROLLING"} · {plot.length} SAMPLES</span>} />
-            <div className="chart-legend">
-              <span><i className="legend-speed" />SPEED <b>{displayNumber(player?.speed)} KM/H</b></span>
-              <span><i className="legend-throttle" />THROTTLE <b>{percent(player?.throttle)}</b></span>
-              <span><i className="legend-brake" />BRAKE <b>{percent(player?.brake)}</b></span>
-            </div>
-            <div className="chart-block">
-              <div className="chart-title"><strong>SPEED</strong><span>KM/H</span></div>
-              <MiniChart points={plot} mode="speed" />
-            </div>
-            <div className="chart-block chart-block-pedals">
-              <div className="chart-title"><strong>PEDALS</strong><span>%</span></div>
-              <MiniChart points={plot} mode="pedals" />
-            </div>
-            <div className="panel-foot"><span>DISTANCE {distance === null ? "—" : `${distance.toFixed(0)} M`}</span><span>LIVE TRACE · NO REFERENCE LAP</span></div>
-          </article>
-
-          <article className="panel panel-car-health">
-            <PanelHeading eyebrow="03 / CHASSIS" title="Car health" trailing={<span className="panel-chip">TYRES · WINGS</span>} />
-            <CarStatusPanel player={player} freshness={snapshot?.freshness} online={socketConnected} retained={frozen} paused={paused} />
-          </article>
-
-          <article className="panel panel-values">
-            <PanelHeading eyebrow="04 / CAR TELEMETRY" title="Player values" trailing={<span className="gear-readout">{displayNumber(player?.gear)}</span>} />
-            <div className="values-grid">
-              <Stat label="SPEED" value={displayNumber(player?.speed)} unit="KM/H" />
-              <Stat label="ENGINE RPM" value={isNumber(player?.rpm) ? player.rpm.toLocaleString() : "—"} />
-              <Stat label="THROTTLE" value={percent(player?.throttle)} />
-              <Stat label="BRAKE" value={percent(player?.brake)} />
-              <Stat label="STEERING" value={displayNumber(player?.steer, 2)} />
-              <Stat label="SUGGESTED GEAR" value={displayNumber(player?.suggestedGear)} />
-              <Stat label="LATERAL G" value={displayNumber(player?.gLat, 2)} />
-              <Stat label="LONGITUDINAL G" value={displayNumber(player?.gLong, 2)} />
-              <Stat label="DRS" value={player?.drs == null ? "—" : player.drs ? "OPEN" : "CLOSED"} />
-              <Stat label="DRS AVAILABLE" value={player?.drsAllowed == null ? "—" : player.drsAllowed ? "YES" : "NO"} />
-              <Stat label="ERS STORE" value={displayNumber(player?.ersStore, 2)} unit="MJ" />
-              <Stat label="ERS MODE" value={displayNumber(player?.ersMode)} />
-              <Stat label="FUEL" value={displayNumber(player?.fuel, 1)} unit="KG" />
-              <Stat label="FUEL LAPS" value={displayNumber(player?.fuelLaps, 1)} />
-              <Stat label="TYRE COMPOUND" value={player?.tyreCompound == null ? "—" : String(player.tyreCompound)} />
-              <Stat label="TYRE AGE" value={displayNumber(player?.tyreAge)} unit="LAPS" />
-            </div>
-            <div className="values-footer">
-              <div className="driving-state"><span className="state-dot" /><span>{isNumber(player?.brake) && isNumber(player?.throttle) ? (player.brake ?? 0) >= 0.02 ? "BRAKING" : (player.throttle ?? 0) >= 0.98 ? "FULL THROTTLE" : (player.throttle ?? 0) > 0.02 ? "ACCELERATING" : "COASTING" : "AWAITING TELEMETRY"}</span></div>
-              <div className="coach-action">
-                <button
-                  className="coach-button active-coach"
-                  onClick={runCoachAnalysis}
-                  disabled={coachLoading}
-                  title="Run live AI telemetry analysis against the Ideal Ghost benchmark"
-                >
-                  <span className="coach-spark">✦</span> {coachLoading ? "ANALYSING TELEMETRY..." : "GEMINI AI COACH"}
-                  <span className="coach-tag">IDEAL GHOST</span>
-                </button>
-                <span className="coach-note">{hasApiKey ? "● GEMINI 3.5 CONNECTED" : "○ TELEMETRY MODE · SET GEMINI KEY FOR LIVE RADIO"}</span>
+        {activeTab === "live" && (
+          <section className="live-grid">
+            <article className="panel f1-panel panel-map">
+              <PanelHeading eyebrow="01 / TRACK POSITION" title="Track position" trailing={<span className="panel-chip">{cars.length ? `${cars.length} CARS` : "NO LIVE CARS"}</span>} />
+              <div className="map-meta">
+                <span>{displayNumber(session?.trackLength)} <small>M TRACK</small></span>
+                <span>{distance === null ? "—" : `${Math.max(0, distance).toFixed(0)} m`} <small>LAP DISTANCE</small></span>
+                <span>{displayNumber(player?.speed)} <small>KM/H</small></span>
               </div>
-            </div>
-          </article>
-        </section>
-      ) : (
-        <LapComparePanel />
-      )}
-
-      <footer className="footer">
-        <span>KREM <i>·</i> LIVE TELEMETRY</span>
-        <span>PACKETS {displayNumber(stats?.packetsReceived)} <i>·</i> ACCEPTED {displayNumber(stats?.packetsAccepted)} <i>·</i> REJECTED {displayNumber(stats?.packetsRejected)}</span>
-        <span>{lastMessageAt ? `UPDATED ${new Date(lastMessageAt).toLocaleTimeString()}` : "WAITING FOR DATA"}</span>
-      </footer>
-
-      {coachOpen && (
-        <div className="coach-modal-backdrop" onClick={() => setCoachOpen(false)}>
-          <div className="coach-modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="coach-modal-header">
-              <div>
-                <span className="coach-eyebrow">✦ AI RACE ENGINEER</span>
-                <h2>Ideal Ghost Telemetry Coach · {coachData?.track?.track_name || session?.trackName || "Circuit"}</h2>
-                {coachData?.nextSector && (
-                  <div className="coach-sector-pill">
-                    FOCUS: <strong>SECTOR {coachData.nextSector}</strong> (BASED ON LAP {coachData.lapNum ?? "PREVIOUS"})
-                  </div>
-                )}
+              <TrackMap cars={cars} history={mapHistory} player={player} trackOutline={trackOutline} />
+              <div className="panel-foot">
+                <span><i className="legend-live" />LIVE CARS</span>
+                <span>{trackOutline ? "STATIC TRACK OUTLINE" : mapHistory.length > 1 ? "LEARNED TRACE" : "NO TRACK GEOMETRY"}</span>
               </div>
-              <button className="coach-close-btn" onClick={() => setCoachOpen(false)}>✕</button>
-            </div>
+            </article>
 
-            <div className="coach-modal-body">
-              {!hasApiKey && (
-                <div className="coach-key-banner">
-                  <div className="coach-key-desc">
-                    <strong>Enter Google Gemini API Key:</strong>
-                    <span>Enables live race engineer advice powered by Gemini 3.5 Flash.</span>
-                  </div>
-                  <div className="coach-key-inputs">
-                    <input
-                      type="password"
-                      placeholder="AIzaSy..."
-                      value={apiKeyInput}
-                      onChange={(e) => setApiKeyInput(e.target.value)}
-                    />
-                    <button onClick={saveApiKey}>Connect API Key</button>
-                  </div>
-                  {keySaveMsg && <div className="key-msg">{keySaveMsg}</div>}
+            <article className="panel f1-panel f1-panel--accent panel-timing">
+              <PanelHeading eyebrow="02 / LAP DATA" title="Timing & sectors" trailing={isNumber(player?.lapNum) ? <span className="lap-badge">LAP {player.lapNum}</span> : undefined} />
+              <div className="timing-main">
+                <div className="timer-block">
+                  <span className="eyebrow">CURRENT LAP</span>
+                  <strong>{formatTime(player?.lapTime)}</strong>
+                  <span className={`timer-status ${player?.invalid ? "text-red" : player?.invalid === false ? "text-green" : "text-amber"}`}>
+                    {player?.invalid == null ? "VALIDITY UNKNOWN" : player.invalid ? "INVALID LAP" : "VALID LAP"}
+                  </span>
                 </div>
-              )}
-
-              {coachLoading ? (
-                <div className="coach-spinner-box">
-                  <span className="coach-spinner" />
-                  <p>Comparing your telemetry against the Ideal Ghost benchmark...</p>
-                </div>
-              ) : coachData ? (
-                <div className="coach-results">
-                  <div className="coach-report-box">
-                    <div className="briefing-header">
-                      <h3>RACE ENGINEER RADIO · SECTOR {coachData.nextSector ?? 1} TARGET</h3>
-                      <span className="last-lap-tag">LAST COMPLETED LAP {coachData.lapNum ? `(#${coachData.lapNum})` : ""}</span>
-                    </div>
-                    <div className="coach-markdown-text">
-                      {coachData.advice.split("\n").map((line, idx) => {
-                        const trimmed = line.trim();
-                        if (!trimmed) return <div key={idx} className="briefing-spacer" />;
-                        if (trimmed.startsWith("###") || trimmed.startsWith("**SECTOR") || trimmed.startsWith("**NEXT")) {
-                          return <h4 key={idx} className="briefing-subhead">{trimmed.replace(/^[#*]+/, "").replace(/[*]+$/, "")}</h4>;
-                        }
-                        if (trimmed.startsWith("-") || trimmed.startsWith("*") || /^[0-9]\./.test(trimmed)) {
-                          return (
-                            <div key={idx} className="briefing-bullet">
-                              <span className="bullet-dot">▸</span>
-                              <span>{trimmed.replace(/^[-*0-9.]+\s*/, "")}</span>
-                            </div>
-                          );
-                        }
-                        return <p key={idx}>{trimmed}</p>;
-                      })}
-                    </div>
+                <div className="position-large"><span>POSITION</span><strong>{isNumber(player?.position) ? `P${player.position}` : "—"}</strong></div>
+              </div>
+              <div className="sector-track" aria-label="Three sector timing">
+                {[1, 2, 3].map((sector) => (
+                  <div key={sector} className={`sector-segment ${currentSector === sector ? "sector-current" : ""}`}>
+                    <span>S{sector}{currentSector === sector ? " · CURRENT" : ""}</span>
+                    <strong>{formatTime(sector === 1 ? player?.sector1TimeMs : sector === 2 ? player?.sector2TimeMs : player?.sector3TimeMs)}</strong>
                   </div>
+                ))}
+              </div>
+              <div className="timing-details">
+                <div><span>LAP DISTANCE</span><strong>{distance === null ? "—" : `${Math.max(0, distance).toFixed(0)} m`}</strong></div>
+                <div><span>RACE LAP COUNT</span><strong>{isNumber(player?.lapNum) && isNumber(session?.totalLaps) ? `${player.lapNum} / ${session.totalLaps}` : "—"}</strong></div>
+                <div><span>TRACK / WEATHER</span><strong>{[session?.trackName, session?.weather].filter((value) => value != null && value !== "").join(" · ") || "—"}</strong></div>
+                <div><span>TRACK / AIR TEMP</span><strong>{isNumber(session?.trackTemp) || isNumber(session?.airTemp) ? `${displayNumber(session?.trackTemp, 0, "°")} / ${displayNumber(session?.airTemp, 0, "°")}` : "—"}</strong></div>
+              </div>
+            </article>
 
-                  {coachData.deltas && coachData.deltas.length > 0 && (
-                    <div className="coach-deltas-section">
-                      <h3>SECTOR {coachData.nextSector ?? 1} CORNER DELTAS VS IDEAL GHOST</h3>
-                      <div className="deltas-grid">
-                        {coachData.deltas.slice(0, 6).map((delta) => (
-                          <div key={delta.turn} className={`delta-card ${delta.time_loss_s > 0.15 ? "loss-high" : ""}`}>
-                            <div className="delta-card-top">
-                              <span className="delta-turn">T{delta.turn} {delta.name}</span>
-                              <span className={`delta-loss-badge ${delta.time_loss_s > 0.1 ? "badge-red" : "badge-green"}`}>
-                                {delta.time_loss_s > 0 ? `+${delta.time_loss_s.toFixed(2)}s` : "ON PACE"}
-                              </span>
-                            </div>
-                            <div className="delta-diag">{delta.diagnosis}</div>
-                            <div className="delta-stats">
-                              <div><span>Ghost Apex:</span> <b>{delta.ideal_apex_speed_kph} km/h (G{delta.ideal_apex_gear})</b></div>
-                              <div><span>Your Apex:</span> <b>{delta.player_min_speed_kph} km/h</b></div>
-                              {isNumber(delta.brake_delta_m) && (
-                                <div><span>Braking:</span> <b>{delta.brake_delta_m! > 0 ? `${Math.round(delta.brake_delta_m!)}m early` : `${Math.abs(Math.round(delta.brake_delta_m!))}m late`}</b></div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
+            <article className="panel f1-panel panel-charts">
+              <PanelHeading eyebrow="03 / DRIVER INPUT" title="Telemetry traces" trailing={<span className="window-label">{chartState} · {plot.length} SAMPLES</span>} />
+              <div className="chart-legend">
+                <span><i className="legend-speed" />SPEED <b>{displayNumber(player?.speed)} KM/H</b></span>
+                <span><i className="legend-throttle" />THROTTLE <b>{percent(player?.throttle)}</b></span>
+                <span><i className="legend-brake" />BRAKE <b>{percent(player?.brake)}</b></span>
+              </div>
+              <div className="chart-block">
+                <div className="chart-title"><strong>SPEED</strong><span>KM/H</span></div>
+                <MiniChart points={plot} mode="speed" />
+              </div>
+              <div className="chart-block chart-block-pedals">
+                <div className="chart-title"><strong>PEDALS</strong><span>%</span></div>
+                <MiniChart points={plot} mode="pedals" />
+              </div>
+              <div className="panel-foot"><span>DISTANCE {distance === null ? "—" : `${distance.toFixed(0)} M`}</span><span>LIVE TRACE · NO REFERENCE LAP</span></div>
+            </article>
+
+            <article className="panel f1-panel panel-car-health">
+              <PanelHeading eyebrow="04 / CHASSIS" title="Car health" trailing={<span className="panel-chip">TYRE & DAMAGE DATA</span>} />
+              <CarStatusPanel player={player} freshness={snapshot?.freshness} online={socketConnected} retained={frozen} paused={paused} />
+            </article>
+
+            <article className="panel f1-panel panel-values">
+              <PanelHeading eyebrow="05 / CAR TELEMETRY" title="Player values" />
+              <div className="primary-readouts">
+                <div className="speed-readout"><span>SPEED</span><strong>{displayNumber(player?.speed)}</strong><small>KM/H</small></div>
+                <div className="gear-readout"><span>GEAR</span><strong>{displayNumber(player?.gear)}</strong></div>
+                <div className="pedal-readout">
+                  {([
+                    { key: "throttle", label: "THROTTLE", value: player?.throttle },
+                    { key: "brake", label: "BRAKE", value: player?.brake },
+                  ] as const).map(({ key, label, value }) => (
+                    <div className={`pedal-meter-row pedal-meter-row--${key}`} key={key}>
+                      <div className="pedal-meter-label"><span>{label}</span><strong>{percent(value)}</strong></div>
+                      <div className="pedal-meter" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={isNumber(value) ? Math.round(value * 100) : undefined}>
+                        <span style={{ width: isNumber(value) ? `${Math.max(0, Math.min(100, value * 100))}%` : "0%" }} />
                       </div>
                     </div>
+                  ))}
+                </div>
+              </div>
+              <div className="values-grid">
+                <Stat label="ENGINE RPM" value={isNumber(player?.rpm) ? player.rpm.toLocaleString() : "—"} />
+                <Stat label="STEERING" value={displayNumber(player?.steer, 2)} />
+                <Stat label="SUGGESTED GEAR" value={displayNumber(player?.suggestedGear)} />
+                <Stat label="LATERAL G" value={displayNumber(player?.gLat, 2)} />
+                <Stat label="LONGITUDINAL G" value={displayNumber(player?.gLong, 2)} />
+                <Stat label="DRS" value={player?.drs == null ? "—" : player.drs ? "OPEN" : "CLOSED"} />
+                <Stat label="DRS AVAILABLE" value={player?.drsAllowed == null ? "—" : player.drsAllowed ? "YES" : "NO"} />
+                <Stat label="ERS STORE" value={displayNumber(player?.ersStore, 2)} unit="MJ" />
+                <Stat label="ERS MODE" value={displayNumber(player?.ersMode)} />
+                <Stat label="FUEL" value={displayNumber(player?.fuel, 1)} unit="KG" />
+                <Stat label="FUEL LAPS" value={displayNumber(player?.fuelLaps, 1)} />
+                <Stat label="TYRE COMPOUND" value={player?.tyreCompound == null ? "—" : String(player.tyreCompound)} />
+                <Stat label="TYRE AGE" value={displayNumber(player?.tyreAge)} unit="LAPS" />
+              </div>
+              <div className="values-footer">
+                <div className="driving-state"><span className={`state-dot ${connected ? "" : "state-dot--inactive"}`} /><span>{connected && isNumber(player?.brake) && isNumber(player?.throttle) ? player.brake >= 0.02 ? "BRAKING" : player.throttle >= 0.98 ? "FULL THROTTLE" : player.throttle > 0.02 ? "ACCELERATING" : "COASTING" : "AWAITING TELEMETRY"}</span></div>
+                <button className="coach-button" type="button" onClick={() => setActiveTab("coach")}>OPEN AI COACH <span aria-hidden="true">→</span></button>
+              </div>
+            </article>
+          </section>
+        )}
+
+        {activeTab === "laps" && <LapComparePanel />}
+
+        {activeTab === "coach" && (
+          <section className="coach-layout">
+            <div className="coach-results-column">
+              {coachLoading ? (
+                <div className="coach-state-block" role="status">Comparing telemetry with the ideal benchmark…</div>
+              ) : coachError ? (
+                <div className="coach-state-block coach-state-block--error" role="alert">{coachError}</div>
+              ) : coachData ? (
+                <div className="coach-results">
+                  <section className="coach-report-box f1-panel f1-panel--accent">
+                    <div className="coach-result-heading">
+                      <div><span className="panel-eyebrow">ANALYSIS REPORT</span><h2>{coachData.track?.track_name || "Coach analysis"}</h2></div>
+                      {isNumber(coachData.lapNum) && <span className="panel-chip">LAP {coachData.lapNum}</span>}
+                    </div>
+                    <div className="coach-result-meta">
+                      <span><small>TRACK</small>{coachData.track?.track_name || "—"}</span>
+                      <span><small>LAP</small>{isNumber(coachData.lapNum) ? coachData.lapNum : "—"}</span>
+                      <span><small>TARGET SECTOR</small>{isNumber(coachData.nextSector) ? `S${coachData.nextSector}` : "—"}</span>
+                    </div>
+                    <div className="coach-advice">{coachData.advice}</div>
+                  </section>
+                  {coachData.deltas.length > 0 && (
+                    <section className="coach-deltas-section">
+                      <div className="section-heading"><div><span className="panel-eyebrow">CORNER BREAKDOWN</span><h2>Telemetry deltas</h2></div></div>
+                      <div className="deltas-grid">
+                        {coachData.deltas.map((delta) => {
+                          const lossClass = delta.time_loss_s > 0 ? "badge-red" : "badge-green";
+                          const lossLabel = delta.time_loss_s > 0
+                            ? `+${delta.time_loss_s.toFixed(2)}s`
+                            : delta.time_loss_s < 0
+                              ? `${delta.time_loss_s.toFixed(2)}s`
+                              : "ON PACE";
+                          return (
+                            <article className="delta-card f1-panel" key={`${delta.turn}-${delta.name}`}>
+                              <div className="delta-card-top">
+                                <span className="delta-turn">T{delta.turn} · {delta.name}</span>
+                                <span className={`delta-loss-badge ${lossClass}`}>{lossLabel}</span>
+                              </div>
+                              <p className="delta-diag">{delta.diagnosis}</p>
+                              <div className="delta-stats">
+                                <div><span>IDEAL APEX</span><b>{delta.ideal_apex_speed_kph} km/h · G{delta.ideal_apex_gear}</b></div>
+                                <div><span>PLAYER MIN SPEED</span><b>{delta.player_min_speed_kph} km/h</b></div>
+                                {isNumber(delta.brake_delta_m) && <div><span>BRAKING DELTA</span><b>{delta.brake_delta_m > 0 ? `${Math.round(delta.brake_delta_m)} m early` : `${Math.abs(Math.round(delta.brake_delta_m))} m late`}</b></div>}
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </section>
                   )}
                 </div>
               ) : (
-                <p>Click "Run Coach" to evaluate your telemetry.</p>
+                <div className="coach-state-block">Run an analysis to see coaching feedback.</div>
               )}
             </div>
-          </div>
-        </div>
-      )}
+            <aside className="coach-controls">
+              {coachKeyPanel}
+              <section className="coach-action-panel f1-panel">
+                <span className="panel-eyebrow">LAST COMPLETED LAP</span>
+                <p className="muted-copy">Analysis uses the current track and most recently completed lap when available.</p>
+                <button
+                  className="primary-action"
+                  type="button"
+                  onClick={runCoachAnalysis}
+                  disabled={coachLoading || !hasApiKey}
+                >
+                  {coachLoading ? "ANALYSING..." : "ANALYSE LAST COMPLETED LAP"}
+                </button>
+                {!hasApiKey && <small className="action-note">Configure the server-side key to run analysis.</small>}
+              </section>
+            </aside>
+          </section>
+        )}
 
+        {activeTab === "settings" && (
+          <section className="settings-grid">
+            <article className="f1-panel f1-panel--accent settings-panel">
+              <div className="section-heading"><div><span className="panel-eyebrow">CONNECTION GUIDE</span><h2>F1 25 telemetry setup</h2></div></div>
+              <ol className="setup-list">
+                <li><span>01</span><div><strong>Enable UDP telemetry</strong><p>In F1 25 telemetry settings, enable UDP telemetry.</p></div></li>
+                <li><span>02</span><div><strong>Choose packet format 2025</strong><p>Set the game’s UDP packet format to <code>2025</code>.</p></div></li>
+                <li><span>03</span><div><strong>Set destination port 20777</strong><p>Configure destination port <code>20777</code> in the game. This dashboard does not save UDP destination settings.</p></div></li>
+                <li><span>04</span><div><strong>Open the local dashboard</strong><p>By default, K.R.E.M.E. is served at <code>http://localhost:8765</code>.</p></div></li>
+              </ol>
+            </article>
+            <article className="f1-panel settings-panel">
+              <div className="section-heading"><div><span className="panel-eyebrow">LIVE DIAGNOSTICS</span><h2>Feed status</h2></div><span className="panel-chip">{feedLabel}</span></div>
+              <div className="diagnostic-grid">
+                <Stat label="FEED STATE" value={feedLabel} />
+                <Stat label="PACKETS / SEC" value={displayNumber(stats?.packetsPerSecond)} />
+                <Stat label="PACKETS RECEIVED" value={displayNumber(stats?.packetsReceived)} />
+                <Stat label="PACKETS ACCEPTED" value={displayNumber(stats?.packetsAccepted)} />
+                <Stat label="PACKETS REJECTED" value={displayNumber(stats?.packetsRejected)} />
+                <Stat label="FRAME GAPS" value={displayNumber(stats?.frameGaps)} />
+                <Stat label="LAST BROWSER UPDATE" value={lastMessageAt ? new Date(lastMessageAt).toLocaleTimeString() : "—"} />
+              </div>
+              <p className="muted-copy">Unavailable diagnostics are shown as —. Paused and retained readings are not live updates.</p>
+            </article>
+            <div className="settings-key">{coachKeyPanel}</div>
+            <article className="f1-panel settings-panel attribution-panel">
+              <div className="section-heading"><div><span className="panel-eyebrow">PROJECT INFORMATION</span><h2>Attribution & independence</h2></div></div>
+              <p>Track map data by <a href="https://github.com/shfonic/ShfonicDashTracks" target="_blank" rel="noreferrer"><strong>Shfonic Dash Track Maps</strong></a> (Richard Hawes and contributors), licensed under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a>.</p>
+              <p>K.R.E.M.E. is an independent project and is not affiliated with or endorsed by EA or Formula 1.</p>
+            </article>
+          </section>
+        )}
+      </div>
+
+      <footer className="app-footer">
+        <span>K.R.E.M.E. <i>·</i> F1 25 TELEMETRY</span>
+        <span>RECEIVED {displayNumber(stats?.packetsReceived)} <i>·</i> ACCEPTED {displayNumber(stats?.packetsAccepted)} <i>·</i> REJECTED {displayNumber(stats?.packetsRejected)}</span>
+        <span>{lastMessageAt ? `UPDATED ${new Date(lastMessageAt).toLocaleTimeString()}` : "WAITING FOR DATA"}</span>
+      </footer>
     </main>
   );
 }

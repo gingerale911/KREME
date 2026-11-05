@@ -21,10 +21,10 @@ F1 25 ──UDP :20777──▶ ingest (asyncio DatagramProtocol)
                         ├─ raw recorder → captures/*.f1udp; replay reader
                         ├─ live state → compact JSON snapshots
                         └─ FastAPI/uvicorn: WebSocket (30 Hz) · REST
-Browser (React+TS/Vite): [1 Track position] [2 Lap analysis] [3 Live graphs] [4 Player values]
+Browser (React+TS/Vite): [Live] [Lap analysis] [AI coach] [Settings]
 ```
 
-Lap persistence, reference traces, calibrated track maps, and AI coaching remain roadmap work. The coach must use Gemini through Google AI Studio; its key stays server-side.
+Lap persistence/comparison, calibrated track-map assets, and Gemini AI coaching APIs are implemented. Reference traces and live-game validation remain pending. The coach key stays server-side.
 
 ---
 
@@ -39,7 +39,7 @@ Lap persistence, reference traces, calibrated track maps, and AI coaching remain
 | M4 | Panel 2 sectors/colours | 🔨 Live lap/sector display; reference-based colours pending |
 | M5 | Panel 3 graphs, Panel 4 values/classifier | 🔨 Live rolling charts and values; reference/classifier work pending |
 | M6 | AI coach + eval harness (Gemini / Google AI Studio) | ✅ Coach and benchmark APIs implemented; live-game validation pending |
-| M7 | Packaging, settings, attribution screen | 🔨 Python package and frontend build work; installer/settings pending |
+| M7 | Packaging, settings, attribution screen | 🔨 Python package, frontend settings/help, and attribution implemented; installer pending |
 | M8 | Track-edge estimation (stretch) | ⬜ Not Started |
 
 ---
@@ -63,7 +63,7 @@ KREM/
 │   ├── package.json
 │   ├── package-lock.json
 │   ├── vite.config.ts
-│   └── src/                               ← four live dashboard panels
+│   └── src/                               ← live, lap analysis, AI coach, settings views
 └── tests/
     ├── test_decoder.py
     ├── test_guard.py
@@ -219,3 +219,13 @@ KREM/
   comparison UI; consolidated overlapping sector-analysis styles.
 - Validation: 156 backend tests passed and the frontend production build passed.
 - Live-game validation remains pending.
+
+## Frontend refresh — 2026-11-05
+
+- Reworked the frontend into Live, Lap Analysis, AI Coach, and Settings views
+  while retaining the shared WebSocket, track projection, lap APIs, and
+  server-side coach-key flow.
+- Added responsive telemetry diagnostics, connection help, and attribution.
+- Validation: frontend production build passed; browser checks at 1440, 900,
+  and 390 CSS pixels showed no page-wide horizontal overflow. Live-game
+  behavior remains pending.

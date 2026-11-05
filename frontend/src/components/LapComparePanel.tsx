@@ -364,17 +364,9 @@ export default function LapComparePanel() {
   }, [sessionId]);
 
   async function handleCompare() {
-    const hasA = Boolean(referenceId && comparisonId);
-    const hasB = Boolean(referenceId2 && comparisonId2);
+    const hasA = Boolean(referenceId && comparisonId && referenceId !== comparisonId);
+    const hasB = Boolean(referenceId2 && comparisonId2 && referenceId2 !== comparisonId2);
     if (!hasA && !hasB) return;
-    if (hasA && referenceId === comparisonId) {
-      setError("Comparison A needs two different laps.");
-      return;
-    }
-    if (hasB && referenceId2 === comparisonId2) {
-      setError("Comparison B needs two different laps.");
-      return;
-    }
 
     setComparing(true);
     setError("");
@@ -424,7 +416,7 @@ export default function LapComparePanel() {
                 {sessions.length === 0 && <option value="">No sessions available</option>}
                 {sessions.map((session) => (
                   <option key={session.sessionId} value={session.sessionId}>
-                    Track {session.trackId ?? "Unknown"} · {session.lapCount} laps
+                    Track {session.trackId ?? "Unknown"} · {session.lapCount} laps{session.startedAt ? ` · ${new Date(session.startedAt).toLocaleDateString()}` : ""}
                   </option>
                 ))}
               </select>
@@ -559,6 +551,7 @@ export default function LapComparePanel() {
                   <span>STATUS</span>
                   <b>{referenceLap.invalid ? "INVALID" : referenceLap.partial ? "PARTIAL" : "VALID"}</b>
                 </div>
+                {referenceLap.qualityReasons.length > 0 && <p className="lap-quality-note">{referenceLap.qualityReasons.join(" · ")}</p>}
               </div>
 
               <div className="lap-card">
@@ -576,6 +569,7 @@ export default function LapComparePanel() {
                   <span>STATUS</span>
                   <b>{comparisonLap.invalid ? "INVALID" : comparisonLap.partial ? "PARTIAL" : "VALID"}</b>
                 </div>
+                {comparisonLap.qualityReasons.length > 0 && <p className="lap-quality-note">{comparisonLap.qualityReasons.join(" · ")}</p>}
               </div>
             </div>
           )}
@@ -590,6 +584,7 @@ export default function LapComparePanel() {
                   <div className="lap-card-row"><span>TIME</span><b>{formatLapTime(referenceLap2.lapTimeMs)}</b></div>
                   <div className="lap-card-row"><span>AVG SPEED</span><b>{referenceLap2.avgSpeedKph?.toFixed(1) ?? "—"} km/h</b></div>
                   <div className="lap-card-row"><span>STATUS</span><b>{referenceLap2.invalid ? "INVALID" : referenceLap2.partial ? "PARTIAL" : "VALID"}</b></div>
+                  {referenceLap2.qualityReasons.length > 0 && <p className="lap-quality-note">{referenceLap2.qualityReasons.join(" · ")}</p>}
                 </div>
                 <div className="lap-card">
                   <span className="lap-card-label">COMPARISON</span>
@@ -597,6 +592,7 @@ export default function LapComparePanel() {
                   <div className="lap-card-row"><span>TIME</span><b>{formatLapTime(comparisonLap2.lapTimeMs)}</b></div>
                   <div className="lap-card-row"><span>AVG SPEED</span><b>{comparisonLap2.avgSpeedKph?.toFixed(1) ?? "—"} km/h</b></div>
                   <div className="lap-card-row"><span>STATUS</span><b>{comparisonLap2.invalid ? "INVALID" : comparisonLap2.partial ? "PARTIAL" : "VALID"}</b></div>
+                  {comparisonLap2.qualityReasons.length > 0 && <p className="lap-quality-note">{comparisonLap2.qualityReasons.join(" · ")}</p>}
                 </div>
               </div>
             </div>
@@ -605,18 +601,22 @@ export default function LapComparePanel() {
           {result && (
             <div className="persistent-result">
               <div>
-                <span>TOTAL TIME DELTA</span>
+                <span>TOTAL TIME DELTA · NEGATIVE = FASTER</span>
                 <strong className={result.totalTimeDeltaMs <= 0 ? "text-green" : "text-amber"}>
                   {formatDelta(result.totalTimeDeltaMs)}
                 </strong>
               </div>
               <div>
-                <span>COMMON TRACK</span>
+                <span>COMMON TRACK LENGTH</span>
                 <strong>{result.commonTrackLength.toFixed(0)} m</strong>
               </div>
               <div>
-                <span>VALID DELTA POINTS</span>
-                <strong>{result.validDeltaPoints} / {result.gridPoints}</strong>
+                <span>GRID POINTS</span>
+                <strong>{result.gridPoints}</strong>
+              </div>
+              <div>
+                <span>VALID ALIGNED POINTS</span>
+                <strong>{result.validDeltaPoints}</strong>
               </div>
             </div>
           )}

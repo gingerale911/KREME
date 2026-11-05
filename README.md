@@ -29,15 +29,15 @@ npm run build
 cd ..
 ```
 
-For the planned Gemini coaching integration, install the optional AI Studio
-client as well:
+For AI Coach analysis, install the optional AI Studio client as well:
 
 ```sh
 python -m pip install -e ".[coach]"
 ```
 
-LLM requests will use the Gemini API from Google AI Studio. The coach is not
-implemented yet; its API key will remain server-side.
+AI Coach requests use the Gemini API from Google AI Studio. Configure the key
+from the dashboard; it is sent to and retained by the server, not browser
+storage.
 
 ## Run
 
@@ -70,9 +70,9 @@ python -m pytest
 
 The in-game capture checks V0–V15 in the
 [dashboard plan](F1_25_Telemetry_Dashboard_Plan.md) remain pending until
-verified against live F1 25 telemetry. KREM currently provides the ingest,
-capture/replay, and live status foundation; the planned map, lap analysis,
-graphs, and coaching panels are not yet implemented.
+verified against live F1 25 telemetry. The dashboard includes live telemetry,
+track position, rolling speed/pedal traces, car health, persistent lap
+comparison, and AI Coach views. Live-game validation remains pending.
 
 ## Attribution
 
