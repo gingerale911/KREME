@@ -737,6 +737,51 @@ function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, delta
     return (trackBenchmark?.corners ?? []).filter((c) => c.sector !== nextSector);
   }, [trackBenchmark, nextSector]);
 
+  // Compute collision-free badge positions (resolves overlapping chicane turns like T18 & T19)
+  const badgePositions = useMemo(() => {
+    if (!bounds || rotatedRacingLine.length < 5 || targetCorners.length === 0) {
+      return [];
+    }
+    const N = rotatedRacingLine.length;
+    const rawBadges = targetCorners.map((tc) => {
+      let apexIdx = Math.round((tc.apex_m / trackLength) * (N - 1));
+      apexIdx = Math.max(0, Math.min(N - 1, apexIdx));
+      const pt = bounds.project(rotatedRacingLine[apexIdx]);
+      return {
+        tc,
+        apexPt: pt,
+        badgePt: { x: pt.x, y: pt.y },
+      };
+    });
+
+    const MIN_DIST = 26; // Badge diameter is 22px; 26px provides a clean visual separation gap
+    for (let iter = 0; iter < 8; iter++) {
+      for (let i = 0; i < rawBadges.length; i++) {
+        for (let j = i + 1; j < rawBadges.length; j++) {
+          const dx = rawBadges[j].badgePt.x - rawBadges[i].badgePt.x;
+          const dy = rawBadges[j].badgePt.y - rawBadges[i].badgePt.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < MIN_DIST) {
+            const overlap = MIN_DIST - dist;
+            let nx = 0.707;
+            let ny = 0.707;
+            if (dist > 0.05) {
+              nx = dx / dist;
+              ny = dy / dist;
+            }
+            const shift = overlap / 2;
+            rawBadges[i].badgePt.x -= nx * shift;
+            rawBadges[i].badgePt.y -= ny * shift;
+            rawBadges[j].badgePt.x += nx * shift;
+            rawBadges[j].badgePt.y += ny * shift;
+          }
+        }
+      }
+    }
+
+    return rawBadges;
+  }, [bounds, rotatedRacingLine, targetCorners, trackLength]);
+
   if (!bounds || rotatedRacingLine.length < 5) {
     return null;
   }
@@ -854,36 +899,51 @@ function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, delta
             );
           })}
 
-          {/* Apex markers and Turn badges for NEXT sector corners */}
-          {targetCorners.map((tc) => {
-            const N = rotatedRacingLine.length;
-            let apexIdx = Math.round((tc.apex_m / trackLength) * (N - 1));
-            apexIdx = Math.max(0, Math.min(N - 1, apexIdx));
-            const pt = bounds.project(rotatedRacingLine[apexIdx]);
-
+          {/* Apex markers and Turn badges with de-overlapping leader lines */}
+          {badgePositions.map(({ tc, apexPt, badgePt }) => {
             const color = tc.needsImprovement ? "#ef4444" : "#10b981";
+            const isDisplaced = Math.hypot(badgePt.x - apexPt.x, badgePt.y - apexPt.y) > 3.5;
 
             return (
-              <g
-                key={`badge-${tc.turn}`}
-                className="coach-turn-pin"
-                transform={`translate(${pt.x}, ${pt.y})`}
-                onMouseEnter={(e) => handleMouseEnter(tc, e)}
-                onMouseLeave={handleMouseLeave}
-                style={{ cursor: "pointer" }}
-              >
-                <circle r={11} fill="#0d131d" stroke={color} strokeWidth={2.4} />
-                <text
-                  y={3.5}
-                  textAnchor="middle"
-                  fill="#ffffff"
-                  fontSize="9.5"
-                  fontWeight="800"
-                  fontFamily="'DM Mono', monospace, sans-serif"
-                  pointerEvents="none"
+              <g key={`badge-${tc.turn}`}>
+                {/* Dotted leader line and apex dot when displaced in close chicanes */}
+                {isDisplaced && (
+                  <g className="coach-leader-line">
+                    <circle cx={apexPt.x} cy={apexPt.y} r={2.5} fill={color} />
+                    <line
+                      x1={apexPt.x}
+                      y1={apexPt.y}
+                      x2={badgePt.x}
+                      y2={badgePt.y}
+                      stroke={color}
+                      strokeWidth={1.4}
+                      strokeDasharray="2 2"
+                      opacity={0.8}
+                    />
+                  </g>
+                )}
+
+                {/* Visible turn pin badge at de-overlapped coordinate */}
+                <g
+                  className="coach-turn-pin"
+                  transform={`translate(${badgePt.x}, ${badgePt.y})`}
+                  onMouseEnter={(e) => handleMouseEnter(tc, e)}
+                  onMouseLeave={handleMouseLeave}
+                  style={{ cursor: "pointer" }}
                 >
-                  {tc.turn}
-                </text>
+                  <circle r={11} fill="#0d131d" stroke={color} strokeWidth={2.4} />
+                  <text
+                    y={3.5}
+                    textAnchor="middle"
+                    fill="#ffffff"
+                    fontSize="9.5"
+                    fontWeight="800"
+                    fontFamily="'DM Mono', monospace, sans-serif"
+                    pointerEvents="none"
+                  >
+                    {tc.turn}
+                  </text>
+                </g>
               </g>
             );
           })}
