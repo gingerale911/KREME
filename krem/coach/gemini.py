@@ -166,40 +166,57 @@ def format_fallback_corner_advice(target_corners: list[CornerDelta]) -> str:
 
 
 def clean_gemini_corner_advice(raw_text: str, fallback_corners: list[CornerDelta]) -> str:
-    """Clean markdown asterisks, strip headers, and normalize into single lines per turn."""
+    """Clean markdown asterisks, remove ### headers, and normalize into single lines per turn."""
     if not raw_text or not raw_text.strip():
         return format_fallback_corner_advice(fallback_corners)
 
-    # Remove bold markdown ** or __
-    cleaned = raw_text.replace("**", "").replace("__", "")
-    lines = [l.strip() for l in cleaned.splitlines() if l.strip()]
-
+    lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
     turns: list[tuple[str, str]] = []
     current_turn: str | None = None
     current_parts: list[str] = []
 
-    for line in lines:
-        # Match "Turn 1:" or "Turn 1 (Name):" or "Turns 2-4 (Name):"
-        m = re.match(r"^(Turns?\s+[\d–-]+(?:\s*\([^)]+\))?)\s*:\s*(.*)$", line, re.IGNORECASE)
-        if m:
-            if current_turn:
-                turns.append((current_turn, " ".join(current_parts)))
-            current_turn = m.group(1).strip()
-            rest = m.group(2).strip()
-            current_parts = [rest] if rest else []
-        elif current_turn:
-            # Sub-bullet like "Braking: Push braking..." or "Apex Speed: ..."
-            sub_m = re.match(r"^(?:[-*•]\s*)?([^:]+):\s*(.*)$", line)
+    def flush():
+        nonlocal current_turn, current_parts
+        if current_turn:
+            text = " ".join(p for p in current_parts if p.strip()).strip()
+            text = re.sub(r"^[#*•\s-]+", "", text).strip()
+            if text:
+                turns.append((current_turn, text))
+        current_turn = None
+        current_parts = []
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = line.replace("**", "").replace("__", "")
+        line_clean = re.sub(r"^[#\s]+", "", line).strip()
+
+        # Discard generic headers, empty notes, and section markers
+        if re.match(r"^(?:sector\s*\d+\s*(?:summary|fixes)?|summary|corner-by-corner\s*fixes|fixes|notes?)\b", line_clean, re.IGNORECASE):
+            continue
+
+        # Match Turn with or without colon: "Turn 15 (Name): advice" or "Turn 15 (Name)"
+        turn_match = re.match(r"^(?:[-*•\s]*)(Turns?\s+[\d–-]+(?:\s*\([^)]+\))?)\s*(?::\s*(.*))?$", line_clean, re.IGNORECASE)
+        if turn_match:
+            flush()
+            current_turn = turn_match.group(1).strip()
+            after_colon = (turn_match.group(2) or "").strip()
+            if after_colon:
+                current_parts.append(after_colon)
+            continue
+
+        if current_turn:
+            sub_m = re.match(r"^(?:[-*•\s]*)([^:]+):\s*(.*)$", line_clean)
             if sub_m and sub_m.group(1).lower().strip() in [
-                "braking", "braking/entry", "apex speed", "apex speed & gear",
-                "apex speed and gear", "exit throttle", "throttle", "gear", "line"
+                "braking", "braking/entry", "entry", "apex speed", "apex speed & gear",
+                "apex speed and gear", "apex", "exit throttle", "throttle", "exit", "gear", "line"
             ]:
                 current_parts.append(sub_m.group(2).strip())
-            elif not re.match(r"^(?:sector|summary|fixes|notes)", line, re.IGNORECASE):
-                current_parts.append(line.lstrip("-*• "))
+            else:
+                current_parts.append(line_clean.lstrip("-*•# "))
 
-    if current_turn:
-        turns.append((current_turn, " ".join(current_parts)))
+    flush()
 
     if not turns:
         return format_fallback_corner_advice(fallback_corners)

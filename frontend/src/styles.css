@@ -1654,3 +1654,29 @@ button { font: inherit; }
 .tooltip-metrics-row b {
   color: #f1f5f9;
 }
+
+/* Distinctive styling for Turn pills vs Engineer tips */
+.coach-corner-pill.pill-turn {
+  color: #31d486;
+  background: rgba(49, 212, 134, 0.12);
+  border: 1px solid rgba(49, 212, 134, 0.35);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 800;
+}
+.coach-corner-pill.pill-tip {
+  color: #c084fc;
+  background: rgba(168, 85, 247, 0.14);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 800;
+  font-size: 0.78rem;
+}
+.coach-corner-advice-row.is-tip {
+  border-left: 3px solid #a855f7;
+  background: rgba(168, 85, 247, 0.04);
+}
+.coach-corner-advice-row.is-turn {
+  border-left: 3px solid #31d486;
+}

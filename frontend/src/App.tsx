@@ -922,55 +922,73 @@ function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, delta
   );
 }
 
-function parseCornerAdvice(rawAdvice: string): Array<{ turnTag: string; advice: string }> {
+function parseCornerAdvice(rawAdvice: string): Array<{ turnTag: string; advice: string; isTurn: boolean }> {
   if (!rawAdvice) return [];
-  const cleaned = rawAdvice.replace(/\*\*/g, "").replace(/__/g, "");
-  const lines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = rawAdvice.split("\n").map((l) => l.trim()).filter(Boolean);
 
-  const items: Array<{ turnTag: string; advice: string }> = [];
+  const items: Array<{ turnTag: string; advice: string; isTurn: boolean }> = [];
   let currentTag: string | null = null;
   let currentParts: string[] = [];
 
-  for (const line of lines) {
-    const match = line.match(/^(?:[-*•]\s*)?(Turns?\s+[\d–-]+(?:\s*\([^)]+\))?)\s*:\s*(.*)$/i);
-    if (match) {
-      if (currentTag) {
-        items.push({ turnTag: currentTag, advice: currentParts.join(" ") });
+  const flush = () => {
+    if (currentTag) {
+      const text = currentParts.filter(Boolean).join(" ").trim().replace(/^[#*•\s-]+/, "");
+      // Completely discard empty advice strings
+      if (text) {
+        items.push({ turnTag: currentTag, advice: text, isTurn: true });
       }
-      currentTag = match[1].trim();
-      const rest = match[2].trim();
-      currentParts = rest ? [rest] : [];
-    } else if (currentTag) {
-      const subMatch = line.match(/^(?:[-*•]\s*)?([^:]+):\s*(.*)$/);
-      if (subMatch && ["braking", "braking/entry", "apex speed", "apex speed & gear", "apex speed and gear", "exit throttle", "throttle", "gear", "line"].includes(subMatch[1].toLowerCase().trim())) {
+    }
+    currentTag = null;
+    currentParts = [];
+  };
+
+  for (const rawLine of lines) {
+    let line = rawLine.trim();
+    if (!line) continue;
+    // Strip bolding and leading/trailing markdown hashes
+    line = line.replace(/\*\*/g, "").replace(/__/g, "");
+    const lineClean = line.replace(/^[#\s]+/, "").replace(/[#\s]+$/, "").trim();
+    if (!lineClean) continue;
+
+    // Discard generic section headers, empty notes, and markdown markers
+    if (/^(?:sector\s*\d+\s*(?:summary|fixes)?|summary|corner-by-corner\s*fixes|fixes|notes?)\b/i.test(lineClean)) {
+      continue;
+    }
+
+    // Match Turn with or without colon: "Turn 15 (Name): advice" or "Turn 15 (Name)" or "T15: advice"
+    const turnMatch = lineClean.match(/^(?:[-*•\s]*)(Turns?\s+[\d–-]+(?:\s*\([^)]+\))?)\s*(?::\s*(.*))?$/i);
+    if (turnMatch) {
+      flush();
+      currentTag = turnMatch[1].trim();
+      const afterColon = (turnMatch[2] || "").trim();
+      if (afterColon) {
+        currentParts.push(afterColon);
+      }
+      continue;
+    }
+
+    if (currentTag) {
+      // Sub-bullet under current turn
+      const subMatch = lineClean.match(/^(?:[-*•\s]*)([^:]+):\s*(.*)$/);
+      if (subMatch && ["braking", "braking/entry", "entry", "apex speed", "apex speed & gear", "apex speed and gear", "apex", "exit throttle", "throttle", "exit", "gear", "line"].includes(subMatch[1].toLowerCase().trim())) {
         currentParts.push(subMatch[2].trim());
-      } else if (!/^(?:sector|summary|fixes|notes)/i.test(line)) {
-        currentParts.push(line.replace(/^[-*•\s]+/, ""));
-      }
-    }
-  }
-  if (currentTag) {
-    items.push({ turnTag: currentTag, advice: currentParts.join(" ") });
-  }
-
-  if (items.length === 0) {
-    for (const line of lines) {
-      if (/^(?:sector|summary|fixes)/i.test(line)) continue;
-      const colonIdx = line.indexOf(":");
-      if (colonIdx > 0 && colonIdx < 30) {
-        items.push({
-          turnTag: line.slice(0, colonIdx).trim(),
-          advice: line.slice(colonIdx + 1).trim(),
-        });
       } else {
+        currentParts.push(lineClean.replace(/^[-*•#\s]+/, ""));
+      }
+    } else {
+      // General engineer note (NOT a turn)
+      const cleanedGeneral = lineClean.replace(/^[-*•#\s]+/, "").trim();
+      if (cleanedGeneral.length > 5 && !/^(?:note|fixes|summary)/i.test(cleanedGeneral)) {
         items.push({
-          turnTag: "Note",
-          advice: line.replace(/^[-*•\s]+/, ""),
+          turnTag: "ENGINEER TIP",
+          advice: cleanedGeneral,
+          isTurn: false,
         });
       }
     }
   }
 
+  flush();
   return items;
 }
 
@@ -1418,8 +1436,8 @@ function App() {
                     </div>
                     <div className="coach-corner-advice-container">
                       {parseCornerAdvice(coachData.advice).map((item, idx) => (
-                        <div key={idx} className="coach-corner-advice-row">
-                          <span className="coach-corner-pill">{item.turnTag}:</span>
+                        <div key={idx} className={`coach-corner-advice-row ${item.isTurn ? "is-turn" : "is-tip"}`}>
+                          <span className={`coach-corner-pill ${item.isTurn ? "pill-turn" : "pill-tip"}`}>{item.turnTag}:</span>
                           <span className="coach-corner-advice-body">{item.advice}</span>
                         </div>
                       ))}
