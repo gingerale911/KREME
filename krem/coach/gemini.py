@@ -1,7 +1,7 @@
 """KREM Coach Gemini API client and prompt builder.
 
 Formats deterministic telemetry deltas into prompt context and calls
-the Google GenAI API to produce direct, actionable race engineer advice.
+the Google GenAI API to produce direct, corner-by-corner race engineer advice.
 """
 
 from __future__ import annotations
@@ -65,6 +65,15 @@ def persist_gemini_api_key(key: str) -> None:
             logger.warning("Could not persist key to %s: %s", p, e)
 
 
+def _sort_corners(corners: list[CornerDelta]) -> list[CornerDelta]:
+    """Sort corners in natural turn order (e.g. 1, 2, 3, 10, 11)."""
+    def turn_sort_key(c: CornerDelta):
+        digits = "".join(filter(str.isdigit, str(c.turn)))
+        return int(digits) if digits else 999
+
+    return sorted(corners, key=turn_sort_key)
+
+
 def build_coach_prompt(
     track: TrackBenchmark,
     player_lap_time_ms: int,
@@ -72,7 +81,7 @@ def build_coach_prompt(
     focus_sector: int | None = None,
     last_lap_num: int | None = None,
 ) -> str:
-    """Construct a clean structured prompt focused strictly on the last completed lap and next sector."""
+    """Construct a clean structured prompt focused strictly corner-by-corner on the upcoming sector."""
     if focus_sector is not None:
         target_corners = [c for c in corner_deltas if c.sector == focus_sector]
         sector_str = f"SECTOR {focus_sector}"
@@ -80,57 +89,79 @@ def build_coach_prompt(
         target_corners = corner_deltas
         sector_str = "NEXT SECTOR"
 
-    sorted_losses = sorted(
-        [c for c in target_corners if c.time_loss_s > 0.04],
-        key=lambda c: c.time_loss_s,
-        reverse=True,
-    )
-    if not sorted_losses:
-        sorted_losses = target_corners[:3]
+    target_corners = _sort_corners(target_corners)
 
     lap_time_str = f"{player_lap_time_ms / 1000.0:.3f}s" if player_lap_time_ms > 0 else "flying lap"
     lap_num_str = f"Lap {last_lap_num}" if last_lap_num else "Last Completed Lap"
 
     corner_lines: list[str] = []
-    for c in sorted_losses:
-        line = (
-            f"- Turn {c.turn} ({c.name}): Deficit ~{c.time_loss_s:.2f}s | "
-            f"Your Apex Speed: {c.player_min_speed_kph:.0f} km/h (Ghost target: {c.ideal_apex_speed_kph:.0f} km/h in gear {c.ideal_apex_gear}) | "
-        )
-        if c.brake_delta_m is not None:
-            if c.brake_delta_m > 0:
-                line += f"Braked {c.brake_delta_m:.0f}m too early | "
-            else:
-                line += f"Braked {abs(c.brake_delta_m):.0f}m late | "
-        if c.throttle_delta_m is not None and c.throttle_delta_m > 0:
-            line += f"Throttle pickup delayed by {c.throttle_delta_m:.0f}m | "
-        line += f"Observation: {c.diagnosis}. Reference note: {c.notes}"
+    for c in target_corners:
+        name_str = f" ({c.name})" if c.name and c.name != f"Turn {c.turn}" else ""
+        if c.time_loss_s > 0.04:
+            line = (
+                f"- Turn {c.turn}{name_str}: Time dropped ~{c.time_loss_s:.2f}s | "
+                f"Your Apex Speed: {c.player_min_speed_kph:.0f} km/h vs Target: {c.ideal_apex_speed_kph:.0f} km/h (Gear {c.ideal_apex_gear}) | "
+            )
+            if c.brake_delta_m is not None:
+                if c.brake_delta_m > 0:
+                    line += f"Braked {c.brake_delta_m:.0f}m too early | "
+                else:
+                    line += f"Braked {abs(c.brake_delta_m):.0f}m late | "
+            if c.throttle_delta_m is not None and c.throttle_delta_m > 0:
+                line += f"Throttle pick-up delayed by {c.throttle_delta_m:.0f}m | "
+            line += f"Observation: {c.diagnosis}. Reference note: {c.notes}"
+        else:
+            line = (
+                f"- Turn {c.turn}{name_str}: On pace (+{c.time_loss_s:.2f}s). "
+                f"Apex Speed: {c.player_min_speed_kph:.0f} km/h (Target: {c.ideal_apex_speed_kph:.0f} km/h in G{c.ideal_apex_gear})."
+            )
         corner_lines.append(line)
 
-    prompt = f"""You are an elite Formula 1 Performance Race Engineer delivering concise, radio-briefing coaching to your driver.
+    prompt = f"""You are an elite Formula 1 Performance Race Engineer delivering concise, corner-by-corner advice over the team radio.
 
-CONTEXT:
-- Circuit: {track.track_name}
-- Evaluated Lap: {lap_num_str} (Lap Time: {lap_time_str})
-- Focus Zone: {sector_str} (Approaching now on track)
+CIRCUIT: {track.track_name}
+EVALUATED LAP: {lap_num_str} (Lap Time: {lap_time_str})
+FOCUS SECTOR: {sector_str} (Approaching on track now)
 
-LAST COMPLETED LAP TELEMETRY DEFICITS IN {sector_str}:
+CORNERS IN {sector_str} FROM LAST LAP:
 {chr(10).join(corner_lines)}
 
 INSTRUCTIONS:
-1. Focus EXCLUSIVELY on {sector_str} of the upcoming lap based strictly on mistakes made in {lap_num_str}. Do not review the entire circuit.
-2. For each corner in this sector where time was dropped, give concise, direct technical corrections:
-   - Specific braking point adjustment (e.g. "push braking 15m deeper to the 100m board").
-   - Apex speed and gear target (e.g. "carry 3rd gear through the apex at ~110 km/h").
-   - Exit throttle timing.
-3. Structure your response cleanly using bullet points and bold highlights:
-   - **SECTOR {focus_sector or 1} SUMMARY**: 1 sentence on the key leak in this sector.
-   - **CORNER-BY-CORNER FIXES**: Clear bullet points per turn.
-   - **NEXT SECTOR TARGET**: Exactly 2 actionable bullet points to execute right now.
+1. Provide your coaching strictly for every corner in {sector_str} in sequential order (Turn 1, Turn 2, etc.).
+2. Do NOT output any introductory text, pleasantries, summary headers, or conclusion paragraphs.
+3. Strictly format each line as:
+Turn <N> (<Turn Name if available>): <1-2 sentences of direct technical correction. Specify braking adjustment (in meters deeper/earlier), target apex speed (km/h) and gear, and exit throttle timing. If the driver is already on pace with no significant time loss, state "On pace — maintain entry line and carry {ideal_speed} km/h in gear {ideal_gear}.">
 
-Maintain a direct, professional race-radio persona (like Bono or GP). Avoid fluffy introductions.
+EXAMPLE OUTPUT FORMAT:
+Turn 1 (Koval Hairpin): Push braking 12m deeper to the 80m board. Carry 3rd gear through the apex at 105 km/h, then get on full throttle earlier on exit.
+Turn 2: On pace — commit flat through the bend in 5th gear.
 """
     return prompt
+
+
+def format_fallback_corner_advice(target_corners: list[CornerDelta]) -> str:
+    """Deterministic fallback formatting corner by corner."""
+    target_corners = _sort_corners(target_corners)
+    lines: list[str] = []
+    for c in target_corners:
+        name_str = f" ({c.name})" if c.name and c.name != f"Turn {c.turn}" else ""
+        if c.time_loss_s > 0.05:
+            advice_parts = []
+            if c.brake_delta_m is not None:
+                if c.brake_delta_m > 0:
+                    advice_parts.append(f"move braking point {c.brake_delta_m:.0f}m deeper")
+                else:
+                    advice_parts.append(f"brake {abs(c.brake_delta_m):.0f}m earlier to hit apex")
+            advice_parts.append(f"target {c.ideal_apex_speed_kph:.0f} km/h apex speed in gear {c.ideal_apex_gear}")
+            if c.throttle_delta_m is not None and c.throttle_delta_m > 0:
+                advice_parts.append(f"pick up throttle {c.throttle_delta_m:.0f}m earlier on exit")
+            joined = ". ".join(p.capitalize() for p in advice_parts) + "."
+            lines.append(f"Turn {c.turn}{name_str}: {joined} ({c.diagnosis})")
+        else:
+            lines.append(
+                f"Turn {c.turn}{name_str}: On pace — maintain entry line and carry {c.ideal_apex_speed_kph:.0f} km/h in gear {c.ideal_apex_gear}."
+            )
+    return "\n".join(lines)
 
 
 def generate_coach_advice(
@@ -141,19 +172,14 @@ def generate_coach_advice(
     last_lap_num: int | None = None,
 ) -> str:
     """Call Google GenAI SDK with automatic fallback to stable models."""
+    target_corners = [
+        c for c in corner_deltas if focus_sector is None or c.sector == focus_sector
+    ]
+
     api_key = get_gemini_api_key()
     if not api_key:
-        return (
-            "⚠️ **Gemini API Key Required**\n\n"
-            "To activate live AI race coaching, configure your `GEMINI_API_KEY` in `.env` or in the connection box above.\n\n"
-            f"**Deterministic Deficits for Sector {focus_sector or 1} (Last Lap):**\n"
-            + "\n".join(
-                f"- **Turn {c.turn} ({c.name})**: {c.diagnosis} (Target: {c.ideal_apex_speed_kph} km/h in G{c.ideal_apex_gear})"
-                for c in corner_deltas if focus_sector is None or c.sector == focus_sector
-            )
-        )
+        return format_fallback_corner_advice(target_corners)
 
-    # Use stable models that returned 200 OK
     MODELS_TO_TRY = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"]
 
     try:
@@ -170,7 +196,7 @@ def generate_coach_advice(
                     contents=prompt,
                 )
                 if response and response.text:
-                    return response.text
+                    return response.text.strip()
             except Exception as model_err:
                 last_error = model_err
                 logger.warning("Model %s failed: %s. Trying next...", model_name, model_err)
@@ -180,23 +206,4 @@ def generate_coach_advice(
 
     except Exception as e:
         logger.exception("Failed to generate coach advice with Gemini API: %s", e)
-        sector_corners = [
-            c for c in corner_deltas if focus_sector is None or c.sector == focus_sector
-        ]
-        top_corners = sorted(sector_corners, key=lambda c: c.time_loss_s, reverse=True)[:3]
-
-        fallback_lines = [
-            f"### Sector {focus_sector or 1} Telemetry Briefing (Last Completed Lap)",
-            f"*Primary time leak in Sector {focus_sector or 1}: Braking and apex speed deficits vs Ideal Ghost.*\n",
-        ]
-        for c in top_corners:
-            fallback_lines.append(
-                f"- **Turn {c.turn} ({c.name})**:\n"
-                f"  - **Issue**: {c.diagnosis}\n"
-                f"  - **Target**: Apex speed **{c.ideal_apex_speed_kph:.0f} km/h** in **Gear {c.ideal_apex_gear}**\n"
-                f"  - **Guideline**: {c.notes}"
-            )
-        fallback_lines.append("\n**NEXT SECTOR TARGET:**")
-        fallback_lines.append("- Move braking zones deeper into heavy deceleration points.")
-        fallback_lines.append("- Commit to early throttle pickup on corner exits.")
-        return "\n".join(fallback_lines)
+        return format_fallback_corner_advice(target_corners)

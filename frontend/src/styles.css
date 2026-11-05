@@ -1454,3 +1454,203 @@ button { font: inherit; }
 .delta-stats b {
   color: #eceff4;
 }
+
+
+/* Coach corner-by-corner advice */
+.coach-corner-advice-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.coach-corner-advice-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 10px 14px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.coach-corner-advice-row:hover {
+  background: rgba(168, 85, 247, 0.05);
+  border-color: rgba(168, 85, 247, 0.25);
+}
+.coach-corner-pill {
+  font-family: 'DM Mono', monospace, sans-serif;
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: #31d486;
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+.coach-corner-advice-body {
+  font-size: 0.92rem;
+  color: #eceff4;
+  line-height: 1.5;
+}
+
+/* Coach Mini Map */
+.coach-minimap-card {
+  background: #151b24;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+  margin-top: 10px;
+}
+.coach-minimap-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 10px;
+}
+.coach-minimap-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #eceff4;
+}
+.minimap-tag {
+  background: rgba(168, 85, 247, 0.2);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+.coach-minimap-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.coach-minimap-legend .legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dot-red {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+.dot-green {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+.dot-muted {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.4);
+}
+.coach-minimap-svg-wrap {
+  position: relative;
+  width: 100%;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  overflow: visible;
+}
+.coach-minimap-svg {
+  width: 100%;
+  height: 240px;
+  display: block;
+}
+.coach-corner-segment {
+  cursor: pointer;
+  filter: drop-shadow(0 0 4px currentColor);
+  transition: stroke-width 0.15s ease;
+}
+.coach-corner-segment:hover {
+  stroke-width: 7.5;
+}
+.coach-turn-pin {
+  transition: transform 0.15s ease;
+}
+.coach-turn-pin:hover {
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.6));
+}
+
+/* Floating Tooltip */
+.coach-minimap-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  padding: 10px 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 15px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 220px;
+  max-width: 320px;
+  white-space: normal;
+}
+.tooltip-top-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tooltip-turn-title {
+  font-family: 'DM Mono', monospace, sans-serif;
+  font-weight: 800;
+  font-size: 0.92rem;
+  color: #fff;
+}
+.tooltip-turn-name {
+  font-size: 0.82rem;
+  color: #94a3b8;
+  font-weight: 500;
+}
+.tooltip-badge {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 800;
+  margin-left: auto;
+}
+.tooltip-diagnosis-text {
+  font-size: 0.82rem;
+  color: #cbd5e1;
+  line-height: 1.35;
+}
+.tooltip-metrics-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 5px;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tooltip-metrics-row b {
+  color: #f1f5f9;
+}

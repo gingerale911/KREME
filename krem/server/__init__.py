@@ -323,14 +323,19 @@ def create_app(
             last_lap_num=last_lap_num,
         )
 
+        db = get_db()
+        circuit_data = db.get_circuit(track_id)
+
         return {
             "track": benchmark.to_dict(),
+            "circuit": circuit_data,
             "lapNum": last_lap_num,
             "lapTimeMs": lap_time_ms,
             "nextSector": next_sector,
             "currentSector": current_sector_idx + 1,
             "hasApiKey": bool(get_gemini_api_key()),
             "deltas": [d.to_dict() for d in sector_deltas],
+            "allDeltas": [d.to_dict() for d in all_deltas],
             "advice": advice,
         }
 

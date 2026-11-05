@@ -154,6 +154,21 @@ interface CoachAnalysisResponse {
     track_name: string;
     track_length_m: number;
     ideal_lap_time_ms: number;
+    sector1_end_m?: number;
+    sector2_end_m?: number;
+    corners?: Array<{
+      turn: string;
+      name: string;
+      start_m: number;
+      end_m: number;
+      apex_m: number;
+      sector: number;
+      ideal_brake_m?: number;
+      ideal_apex_speed_kph?: number;
+      ideal_apex_gear?: number;
+      ideal_throttle_m?: number;
+      notes?: string;
+    }>;
   };
   lapNum?: number | null;
   lapTimeMs?: number;
@@ -161,7 +176,9 @@ interface CoachAnalysisResponse {
   currentSector?: number;
   hasApiKey: boolean;
   deltas: CornerDeltaUI[];
+  allDeltas?: CornerDeltaUI[];
   advice: string;
+  circuit?: any;
 }
 
 interface TelemetrySnapshot {
@@ -536,6 +553,338 @@ function MiniChart({ points, mode }: { points: PlotPoint[]; mode: "speed" | "ped
       <text x={padding.left} y={height - 2} className="chart-axis-label">ROLLING WINDOW</text>
       <text x={width - padding.right} y={height - 2} textAnchor="end" className="chart-axis-label">NOW</text>
     </svg>
+  );
+}
+
+interface CoachMiniMapProps {
+  trackOutline: TrackOutline | null;
+  circuit?: any;
+  trackBenchmark?: CoachAnalysisResponse["track"];
+  nextSector: number;
+  deltas?: CornerDeltaUI[];
+}
+
+function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, deltas = [] }: CoachMiniMapProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [hovered, setHovered] = useState<{
+    turn: string;
+    name: string;
+    needsImprovement: boolean;
+    timeLoss: number;
+    delta?: CornerDeltaUI;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const rawRacingLine: Position[] = useMemo(() => {
+    if (trackOutline?.racingLine && trackOutline.racingLine.length > 0) {
+      return trackOutline.racingLine;
+    }
+    const f1Line = circuit?.lines?.formula1?.racing_line;
+    if (Array.isArray(f1Line) && f1Line.length > 0) {
+      return f1Line.map((pt: any) =>
+        Array.isArray(pt) ? { x: Number(pt[0]), z: Number(pt[1]) } : { x: Number(pt.x), z: Number(pt.z) }
+      );
+    }
+    return [];
+  }, [trackOutline, circuit]);
+
+  const rawLeftEdge: Position[] = useMemo(() => {
+    if (trackOutline?.leftEdge && trackOutline.leftEdge.length > 0) return trackOutline.leftEdge;
+    if (Array.isArray(circuit?.left_edge) && circuit.left_edge.length > 0) {
+      return circuit.left_edge.map((pt: any) =>
+        Array.isArray(pt) ? { x: Number(pt[0]), z: Number(pt[1]) } : { x: Number(pt.x), z: Number(pt.z) }
+      );
+    }
+    return [];
+  }, [trackOutline, circuit]);
+
+  const rawRightEdge: Position[] = useMemo(() => {
+    if (trackOutline?.rightEdge && trackOutline.rightEdge.length > 0) return trackOutline.rightEdge;
+    if (Array.isArray(circuit?.right_edge) && circuit.right_edge.length > 0) {
+      return circuit.right_edge.map((pt: any) =>
+        Array.isArray(pt) ? { x: Number(pt[0]), z: Number(pt[1]) } : { x: Number(pt.x), z: Number(pt.z) }
+      );
+    }
+    return [];
+  }, [trackOutline, circuit]);
+
+  const orientation = Number(trackOutline?.orientation ?? circuit?.orientation ?? 0);
+
+  const rotatedRacingLine = useMemo(
+    () => (rawRacingLine.length > 0 ? rotateTrackPoints(rawRacingLine, orientation) : []),
+    [rawRacingLine, orientation]
+  );
+  const rotatedLeftEdge = useMemo(
+    () => (rawLeftEdge.length > 0 ? rotateTrackPoints(rawLeftEdge, orientation) : []),
+    [rawLeftEdge, orientation]
+  );
+  const rotatedRightEdge = useMemo(
+    () => (rawRightEdge.length > 0 ? rotateTrackPoints(rawRightEdge, orientation) : []),
+    [rawRightEdge, orientation]
+  );
+
+  const bounds = useMemo(() => {
+    const points =
+      rotatedLeftEdge.length > 0 && rotatedRightEdge.length > 0
+        ? [...rotatedLeftEdge, ...rotatedRightEdge]
+        : rotatedRacingLine;
+    if (!points.length) return null;
+
+    const xs = points.map((p) => p.x);
+    const zs = points.map((p) => p.z);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minZ = Math.min(...zs);
+    const maxZ = Math.max(...zs);
+    const spanX = Math.max(maxX - minX, 20);
+    const spanZ = Math.max(maxZ - minZ, 20);
+    const padX = spanX * 0.12;
+    const padZ = spanZ * 0.12;
+    const width = 860;
+    const height = 260;
+    const scale = Math.min((width - 60) / (spanX + padX * 2), (height - 50) / (spanZ + padZ * 2));
+    const offsetX = (width - (spanX + padX * 2) * scale) / 2;
+    const offsetY = (height - (spanZ + padZ * 2) * scale) / 2;
+
+    const project = (point: Position) => ({
+      x: offsetX + (point.x - minX + padX) * scale,
+      y: offsetY + (point.z - minZ + padZ) * scale,
+    });
+
+    return { project, width, height };
+  }, [rotatedLeftEdge, rotatedRightEdge, rotatedRacingLine]);
+
+  const trackLength = Number(trackBenchmark?.track_length_m || circuit?.game_track_length_m || 5000);
+
+  // Focus sector corners
+  const targetCorners = useMemo(() => {
+    const benchCorners = (trackBenchmark?.corners ?? []).filter((c) => c.sector === nextSector);
+    if (benchCorners.length > 0) {
+      return benchCorners.map((bc) => {
+        const delta = deltas.find((d) => String(d.turn) === String(bc.turn));
+        return {
+          turn: String(bc.turn),
+          name: bc.name && bc.name !== `Turn ${bc.turn}` ? bc.name : "",
+          start_m: bc.start_m,
+          end_m: bc.end_m,
+          apex_m: bc.apex_m,
+          sector: bc.sector,
+          delta,
+        };
+      });
+    }
+    // Fallback if no benchCorners: use deltas directly
+    return deltas.map((d) => ({
+      turn: String(d.turn),
+      name: d.name && d.name !== `Turn ${d.turn}` ? d.name : "",
+      start_m: Math.max(0, d.apex_m - 45),
+      end_m: d.apex_m + 45,
+      apex_m: d.apex_m,
+      sector: d.sector || nextSector,
+      delta: d,
+    }));
+  }, [trackBenchmark, nextSector, deltas]);
+
+  // Non-target sector corners (for subtle muted circuit reference)
+  const otherCorners = useMemo(() => {
+    return (trackBenchmark?.corners ?? []).filter((c) => c.sector !== nextSector);
+  }, [trackBenchmark, nextSector]);
+
+  if (!bounds || rotatedRacingLine.length < 5) {
+    return null;
+  }
+
+  const surfacePath =
+    rotatedLeftEdge.length > 0 && rotatedRightEdge.length > 0
+      ? toSvgPath([...rotatedLeftEdge, ...rotatedRightEdge.slice().reverse()], bounds.project, true)
+      : "";
+  const fullRacingLinePath = toSvgPath(rotatedRacingLine, bounds.project, false);
+
+  const handleMouseEnter = (corner: any, e: React.MouseEvent) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const relX = e.clientX - rect.left;
+    const relY = e.clientY - rect.top;
+    const timeLoss = corner.delta ? Number(corner.delta.time_loss_s) : 0;
+    const needsImprovement =
+      timeLoss > 0.05 ||
+      (corner.delta?.diagnosis && !corner.delta.diagnosis.toLowerCase().includes("optimal") && timeLoss > 0.02);
+
+    setHovered({
+      turn: corner.turn,
+      name: corner.name,
+      needsImprovement: Boolean(needsImprovement),
+      timeLoss,
+      delta: corner.delta,
+      x: Math.min(Math.max(relX, 120), rect.width - 120),
+      y: Math.max(relY - 14, 12),
+    });
+  };
+
+  const handleMouseLeave = () => {
+    setHovered(null);
+  };
+
+  return (
+    <div className="coach-minimap-card" ref={containerRef}>
+      <div className="coach-minimap-header">
+        <div className="coach-minimap-title">
+          <span className="minimap-tag">CIRCUIT MAP</span>
+          <span>SECTOR {nextSector} CORNER PACE ANALYSIS</span>
+        </div>
+        <div className="coach-minimap-legend">
+          <span className="legend-item"><i className="dot-red" /> Improvement Needed</span>
+          <span className="legend-item"><i className="dot-green" /> On Pace</span>
+          <span className="legend-item"><i className="dot-muted" /> Full Circuit</span>
+        </div>
+      </div>
+
+      <div className="coach-minimap-svg-wrap">
+        <svg
+          viewBox={`0 0 ${bounds.width} ${bounds.height}`}
+          className="coach-minimap-svg"
+          preserveAspectRatio="xMidYMid meet"
+        >
+          {/* Faint track ribbon */}
+          {surfacePath && (
+            <path
+              d={surfacePath}
+              fill="rgba(255, 255, 255, 0.03)"
+              stroke="rgba(255, 255, 255, 0.07)"
+              strokeWidth={1}
+            />
+          )}
+
+          {/* Full circuit racing line (muted) */}
+          <path
+            d={fullRacingLinePath}
+            fill="none"
+            stroke="rgba(148, 163, 184, 0.28)"
+            strokeWidth={2.4}
+            strokeDasharray="3 3"
+          />
+
+          {/* Subtle dots for other turns across the circuit */}
+          {otherCorners.map((oc) => {
+            const N = rotatedRacingLine.length;
+            let idx = Math.round((oc.apex_m / trackLength) * (N - 1));
+            idx = Math.max(0, Math.min(N - 1, idx));
+            const pt = bounds.project(rotatedRacingLine[idx]);
+            return (
+              <g key={`other-turn-${oc.turn}`} className="other-turn-mark" opacity={0.35}>
+                <circle cx={pt.x} cy={pt.y} r={2.5} fill="rgba(148, 163, 184, 0.8)" />
+              </g>
+            );
+          })}
+
+          {/* Highlighted corner paths for the NEXT sector ONLY */}
+          {targetCorners.map((tc) => {
+            const N = rotatedRacingLine.length;
+            let sIdx = Math.floor((tc.start_m / trackLength) * (N - 1));
+            let eIdx = Math.ceil((tc.end_m / trackLength) * (N - 1));
+            sIdx = Math.max(0, Math.min(N - 1, sIdx));
+            eIdx = Math.max(0, Math.min(N - 1, eIdx));
+            if (Math.abs(eIdx - sIdx) < 4) {
+              sIdx = Math.max(0, sIdx - 2);
+              eIdx = Math.min(N - 1, eIdx + 2);
+            }
+            const slice = sIdx <= eIdx
+              ? rotatedRacingLine.slice(sIdx, eIdx + 1)
+              : [...rotatedRacingLine.slice(sIdx), ...rotatedRacingLine.slice(0, eIdx + 1)];
+            const cornerD = toSvgPath(slice, bounds.project, false);
+
+            const timeLoss = tc.delta ? Number(tc.delta.time_loss_s) : 0;
+            const needsImprovement =
+              timeLoss > 0.05 ||
+              (tc.delta?.diagnosis && !tc.delta.diagnosis.toLowerCase().includes("optimal") && timeLoss > 0.02);
+            const color = needsImprovement ? "#ef4444" : "#10b981";
+
+            return (
+              <path
+                key={`highlight-path-${tc.turn}`}
+                d={cornerD}
+                fill="none"
+                stroke={color}
+                strokeWidth={5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="coach-corner-segment"
+                onMouseEnter={(e) => handleMouseEnter(tc, e)}
+                onMouseLeave={handleMouseLeave}
+              />
+            );
+          })}
+
+          {/* Apex markers and Turn badges for NEXT sector corners */}
+          {targetCorners.map((tc) => {
+            const N = rotatedRacingLine.length;
+            let apexIdx = Math.round((tc.apex_m / trackLength) * (N - 1));
+            apexIdx = Math.max(0, Math.min(N - 1, apexIdx));
+            const pt = bounds.project(rotatedRacingLine[apexIdx]);
+
+            const timeLoss = tc.delta ? Number(tc.delta.time_loss_s) : 0;
+            const needsImprovement =
+              timeLoss > 0.05 ||
+              (tc.delta?.diagnosis && !tc.delta.diagnosis.toLowerCase().includes("optimal") && timeLoss > 0.02);
+            const color = needsImprovement ? "#ef4444" : "#10b981";
+
+            return (
+              <g
+                key={`badge-${tc.turn}`}
+                className="coach-turn-pin"
+                transform={`translate(${pt.x}, ${pt.y})`}
+                onMouseEnter={(e) => handleMouseEnter(tc, e)}
+                onMouseLeave={handleMouseLeave}
+                style={{ cursor: "pointer" }}
+              >
+                <circle r={11} fill="#0d131d" stroke={color} strokeWidth={2.4} />
+                <text
+                  y={3.5}
+                  textAnchor="middle"
+                  fill="#ffffff"
+                  fontSize="9.5"
+                  fontWeight="800"
+                  fontFamily="'DM Mono', monospace, sans-serif"
+                  pointerEvents="none"
+                >
+                  {tc.turn}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* Hover Tooltip */}
+        {hovered && (
+          <div
+            className="coach-minimap-tooltip"
+            style={{
+              left: `${hovered.x}px`,
+              top: `${hovered.y}px`,
+              transform: "translate(-50%, -100%)",
+            }}
+          >
+            <div className="tooltip-top-row">
+              <span className="tooltip-turn-title">Turn {hovered.turn}</span>
+              {hovered.name ? <span className="tooltip-turn-name">{hovered.name}</span> : null}
+              <span className={`tooltip-badge ${hovered.needsImprovement ? "badge-red" : "badge-green"}`}>
+                {hovered.needsImprovement ? `+${hovered.timeLoss.toFixed(2)}s DEFICIT` : "ON PACE"}
+              </span>
+            </div>
+            {hovered.delta?.diagnosis && (
+              <div className="tooltip-diagnosis-text">{hovered.delta.diagnosis}</div>
+            )}
+            {hovered.delta && (
+              <div className="tooltip-metrics-row">
+                <span>Ghost Target: <b>{hovered.delta.ideal_apex_speed_kph} km/h (G{hovered.delta.ideal_apex_gear})</b></span>
+                <span>Your Apex: <b>{hovered.delta.player_min_speed_kph} km/h</b></span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -955,23 +1304,27 @@ function App() {
                       <h3>RACE ENGINEER RADIO · SECTOR {coachData.nextSector ?? 1} TARGET</h3>
                       <span className="last-lap-tag">LAST COMPLETED LAP {coachData.lapNum ? `(#${coachData.lapNum})` : ""}</span>
                     </div>
-                    <div className="coach-markdown-text">
-                      {coachData.advice.split("\n").map((line, idx) => {
-                        const trimmed = line.trim();
-                        if (!trimmed) return <div key={idx} className="briefing-spacer" />;
-                        if (trimmed.startsWith("###") || trimmed.startsWith("**SECTOR") || trimmed.startsWith("**NEXT")) {
-                          return <h4 key={idx} className="briefing-subhead">{trimmed.replace(/^[#*]+/, "").replace(/[*]+$/, "")}</h4>;
-                        }
-                        if (trimmed.startsWith("-") || trimmed.startsWith("*") || /^[0-9]\./.test(trimmed)) {
+                    <div className="coach-corner-advice-container">
+                      {coachData.advice
+                        .split("\n")
+                        .map((line) => line.trim())
+                        .filter(Boolean)
+                        .map((line, idx) => {
+                          const match = line.match(/^(?:[-*•]\s*)?((?:turn|t)\s*\d+[^:]*):\s*(.*)$/i);
+                          if (match) {
+                            return (
+                              <div key={idx} className="coach-corner-advice-row">
+                                <span className="coach-corner-pill">{match[1]}:</span>
+                                <span className="coach-corner-advice-body">{match[2]}</span>
+                              </div>
+                            );
+                          }
                           return (
-                            <div key={idx} className="briefing-bullet">
-                              <span className="bullet-dot">▸</span>
-                              <span>{trimmed.replace(/^[-*0-9.]+\s*/, "")}</span>
+                            <div key={idx} className="coach-corner-advice-row general">
+                              <span className="coach-corner-advice-body">{line.replace(/^[#*-•]+\s*/, "")}</span>
                             </div>
                           );
-                        }
-                        return <p key={idx}>{trimmed}</p>;
-                      })}
+                        })}
                     </div>
                   </div>
 
@@ -1000,6 +1353,14 @@ function App() {
                       </div>
                     </div>
                   )}
+
+                  <CoachMiniMap
+                    trackOutline={trackOutline}
+                    circuit={coachData.circuit}
+                    trackBenchmark={coachData.track}
+                    nextSector={coachData.nextSector ?? 1}
+                    deltas={coachData.deltas}
+                  />
                 </div>
               ) : (
                 <p>Click "Run Coach" to evaluate your telemetry.</p>

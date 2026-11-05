@@ -172,8 +172,9 @@ def load_track_sections_from_json(json_path: Path) -> tuple[str, float, float, f
     track_name = data.get("track", "Unknown Track")
     track_length = float(data.get("game_track_length_m", 5000.0))
     sectors = data.get("sectors", [])
-    s1_end = float(sectors[0].get("lap_dist_m", track_length * 0.33)) if len(sectors) > 0 else track_length * 0.33
-    s2_end = float(sectors[1].get("lap_dist_m", track_length * 0.66)) if len(sectors) > 1 else track_length * 0.66
+    splits = sorted([float(s.get("lap_dist_m", 0.0)) for s in sectors if float(s.get("lap_dist_m", 0.0)) > 50.0])
+    s1_end = splits[0] if len(splits) > 0 else track_length * 0.33
+    s2_end = splits[1] if len(splits) > 1 else track_length * 0.66
     sections = data.get("sections", [])
     return track_name, track_length, s1_end, s2_end, sections
 
