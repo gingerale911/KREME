@@ -251,6 +251,7 @@ class LapRecorder:
         )
 
         speed = throttle = brake = None
+        steer = gear = rpm = drs = None
 
         if aligned:
             values = telemetry.data["cars"][h.player_car_index]
@@ -269,6 +270,23 @@ class LapRecorder:
             ):
                 speed = throttle = brake = None
 
+            try:
+                steer = number(values["steer"])
+            except Exception:
+                pass
+            try:
+                gear = int(values["gear"])
+            except Exception:
+                pass
+            try:
+                rpm = int(values["engineRPM"])
+            except Exception:
+                pass
+            try:
+                drs = int(values["drs"])
+            except Exception:
+                pass
+
         if speed is None:
             current["reasons"].add("missing_telemetry")
 
@@ -279,6 +297,12 @@ class LapRecorder:
             "speed": speed,
             "throttle": throttle,
             "brake": brake,
+            "steer": steer,
+            "steering": steer,
+            "gear": gear,
+            "rpm": rpm,
+            "engineRPM": rpm,
+            "drs": drs,
             "frameId": int(h.frame_identifier),
             "overallFrameId": int(h.overall_frame_identifier),
             "sessionTime": session_time,
@@ -448,6 +472,30 @@ class LapRecorder:
                 self.storage_writer.submit(record)
 
             # History may repair timing, but cannot fill missing trace samples.
+
+    def current_lap_snapshot(self) -> dict[str, Any] | None:
+        if not self.current or not self.current.get("samples"):
+            return None
+        s1, s2 = self.current["sectors"]
+        return {
+            "id": f"{self.identity[0] if self.identity else 0}:{self.identity[1] if self.identity else 0}:{self.epoch}:{self.current['lap']}:in_progress",
+            "sessionUid": str(self.identity[0]) if self.identity else "",
+            "playerCarIndex": self.identity[1] if self.identity else 0,
+            "epoch": self.epoch,
+            "lap": self.current["lap"],
+            "trackId": self.track_id,
+            "trackLength": self.track_length,
+            "lapTimeMs": self.current["lastElapsed"],
+            "sector1TimeMs": s1,
+            "sector2TimeMs": s2,
+            "sector3TimeMs": None,
+            "invalid": self.current["invalid"],
+            "partial": True,
+            "inProgress": True,
+            "qualityReasons": sorted(self.current["reasons"]),
+            "sampleCount": len(self.current["samples"]),
+            "samples": self.current["samples"],
+        }
 
     def status(self) -> dict[str, Any]:
         return {

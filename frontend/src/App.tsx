@@ -1,5 +1,6 @@
 import CarStatusPanel from "./components/CarStatusPanel";
 import LapComparePanel from "./components/LapComparePanel";
+import TelemetryReplayPanel from "./components/TelemetryReplayPanel";
 import CoachCards, { type CoachAnalysisResponse } from "./components/CoachCards";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -552,7 +553,7 @@ function App() {
   const [trackOutline, setTrackOutline] = useState<TrackOutline | null>(null);
   const [lightTheme, setLightTheme] = useState(false);
   const [selectedLap, setSelectedLap] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"live" | "laps">("live");
+  const [activeTab, setActiveTab] = useState<"live" | "laps" | "replay">("live");
   const [coachOpen, setCoachOpen] = useState(false);
   const [coachLoading, setCoachLoading] = useState(false);
   const [coachError, setCoachError] = useState("");
@@ -607,7 +608,7 @@ function App() {
     setCoachError("");
     setCoachLoading(false);
     setCoachOpen(false);
-  }, [snapshot?.liveStreamId, snapshot?.recorder?.epoch, player?.lapNum, player?.sector]);
+  }, [snapshot?.liveStreamId, snapshot?.recorder?.epoch, snapshot?.recorder?.sessionUid]);
 
   const runCoachAnalysis = async () => {
     const request = ++coachRequest.current;
@@ -624,11 +625,16 @@ function App() {
           lapNum: isNumber(player?.lapNum) && player.lapNum > 1 ? player.lapNum - 1 : undefined,
         }),
       });
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        // non-JSON response
+      }
       if (request !== coachRequest.current) return;
-      if (!res.ok) throw new Error(data.detail || "Analysis failed. Try again.");
+      if (!res.ok) throw new Error(data?.detail || "Analysis failed. Try again.");
       setCoachData(data);
-      if (typeof data.hasApiKey === "boolean") setHasApiKey(data.hasApiKey);
+      if (typeof data?.hasApiKey === "boolean") setHasApiKey(data.hasApiKey);
     } catch (e) {
       if (request === coachRequest.current) setCoachError(e instanceof Error ? e.message : "Analysis failed");
     } finally {
@@ -747,7 +753,7 @@ function App() {
   }, [lapHistory, latestLap, selectedLap]);
 
   return (
-    <main className={`dashboard ${lightTheme ? "theme-light" : ""} ${activeTab === "live" ? "race-view" : "compare-view"}`}>
+    <main className={`dashboard ${lightTheme ? "theme-light" : ""} ${activeTab === "live" ? "race-view" : activeTab === "replay" ? "race-view replay-view" : "compare-view"}`}>
       <header className="topbar">
         <a className="brand" href="#" aria-label="KREM dashboard home">
           <span className="brand-mark"><i /><i /><i /></span>
@@ -776,6 +782,7 @@ function App() {
         <div className="status-item status-wide"><span className="status-label">FORMAT</span><strong>F1 25 · 2025</strong></div>
         <div className="status-tabs" aria-label="Dashboard views">
           <button className={activeTab === "live" ? "status-tab active" : "status-tab"} onClick={() => setActiveTab("live")}>Live</button>
+          <button className={activeTab === "replay" ? "status-tab active" : "status-tab"} onClick={() => setActiveTab("replay")}>Telemetry Replay</button>
           <button className={activeTab === "laps" ? "status-tab active" : "status-tab"} onClick={() => setActiveTab("laps")}>Lap compare</button>
         </div>
         <div className="status-event"><span className="event-pulse" />{eventText || "READY FOR RACE CONTROL EVENTS"}</div>
@@ -875,6 +882,13 @@ function App() {
 
           </article>
         </section>
+      ) : activeTab === "replay" ? (
+        <TelemetryReplayPanel
+          liveLaps={lapHistory}
+          currentSession={session}
+          currentTrackOutline={trackOutline}
+          livePlayer={player}
+        />
       ) : (
         <LapComparePanel />
       )}

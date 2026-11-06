@@ -179,3 +179,33 @@ def test_both_missing_packets_produce_a_gap_on_next_sample():
     add(r,pair(31,lap=2,last=600));r.flush(force=True)
     assert r.records[0]['samples'][-1]['gapBefore']
     assert r.records[0]['partial']
+
+
+def test_sample_captures_gear_steer_rpm_drs():
+    r = recorder()
+    p, t = pair(1, lap=1, elapsed=100, distance=15)
+    t.data['cars'][0]['gear'] = 4
+    t.data['cars'][0]['steer'] = -0.35
+    t.data['cars'][0]['engineRPM'] = 11200
+    t.data['cars'][0]['drs'] = 1
+    add(r, [p, t])
+    r.flush(force=True)
+    sample = r.current['samples'][0]
+    assert sample['gear'] == 4
+    assert sample['steer'] == pytest.approx(-0.35, rel=1e-3)
+    assert sample['steering'] == pytest.approx(-0.35, rel=1e-3)
+    assert sample['rpm'] == 11200
+    assert sample['drs'] == 1
+
+
+def test_current_lap_snapshot():
+    r = recorder()
+    assert r.current_lap_snapshot() is None
+    p, t = pair(1, lap=2, elapsed=450, distance=80)
+    add(r, [p, t])
+    r.flush(force=True)
+    snapshot = r.current_lap_snapshot()
+    assert snapshot is not None
+    assert snapshot['lap'] == 2
+    assert snapshot['inProgress'] is True
+    assert len(snapshot['samples']) == 1

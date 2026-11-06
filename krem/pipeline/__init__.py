@@ -329,6 +329,13 @@ class LiveState:
             "details": {k: v for k, v in packet.data.items() if k != "code"},
         })
 
+    def current_lap_snapshot(self) -> dict[str, Any] | None:
+        """Return the active in-progress lap record with current samples."""
+        with self._lock:
+            self.lap_recorder.flush(force=True)
+            lap = self.lap_recorder.current_lap_snapshot()
+            return _json_safe(lap) if lap else None
+
     def lap_history_snapshot(self) -> list[dict[str, Any]]:
         """Return the completed lap records for this telemetry session."""
         with self._lock:
@@ -649,6 +656,8 @@ def _json_number(value: Any, digits: int | None) -> int | float | None:
 
 def _json_safe(value: Any) -> Any:
     """Recursively convert event values to JSON-safe Python primitives."""
+    if isinstance(value, bool):
+        return bool(value)
     if isinstance(value, dict):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):

@@ -1897,3 +1897,357 @@ button { font: inherit; }
   .comparison-workspace .comparison-graphs { grid-template-columns: 1fr; }
   .compare-controls { grid-template-columns: 1fr; }
 }
+
+/* =========================================================================
+   TELEMETRY REPLAY VIEW & VCR TOOLBAR
+   ========================================================================= */
+.replay-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  flex: 1;
+}
+
+.replay-toolbar {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+}
+
+.replay-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.replay-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.replay-group-label {
+  font: 8px "DM Mono", monospace;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.replay-pill-toggle {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--panel-raised);
+}
+
+.replay-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font: 9px "DM Mono", monospace;
+  padding: 5px 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.replay-btn.active {
+  background: #2b394d;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.replay-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.replay-mini-label {
+  font: 8px "DM Mono", monospace;
+  color: var(--muted);
+}
+
+.replay-select {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: 11px "DM Mono", monospace;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  max-width: 240px;
+}
+
+.replay-select.lap-select {
+  font-weight: 700;
+  color: #38d995;
+}
+
+.replay-sector-pills {
+  display: flex;
+  gap: 4px;
+}
+
+.sector-pill {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font: 10px "DM Mono", monospace;
+  padding: 5px 9px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 700;
+  transition: all 0.15s;
+}
+
+.sector-pill:hover {
+  color: var(--text);
+  border-color: #4a5c75;
+}
+
+.sector-pill.active {
+  background: #1c2738;
+  color: #fff;
+  border-color: #38d995;
+  box-shadow: 0 0 10px rgba(56, 217, 149, 0.3);
+}
+
+.sector-pill.s1-pill.active {
+  border-color: #b05cff;
+  color: #e2b8ff;
+  box-shadow: 0 0 10px rgba(176, 92, 255, 0.4);
+}
+
+.sector-pill.s2-pill.active {
+  border-color: #f2b94b;
+  color: #ffeb99;
+  box-shadow: 0 0 10px rgba(242, 185, 75, 0.4);
+}
+
+.sector-pill.s3-pill.active {
+  border-color: #38bdf8;
+  color: #bae6fd;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+}
+
+.replay-transport {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vcr-btn {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: 10px "DM Mono", monospace;
+  padding: 5px 9px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.vcr-btn:hover {
+  background: #232f42;
+  border-color: #4a5c75;
+}
+
+.vcr-btn.play-btn {
+  background: #153c2a;
+  border-color: #38d995;
+  color: #38d995;
+  font-weight: 700;
+  padding: 5px 14px;
+  box-shadow: 0 0 12px rgba(56, 217, 149, 0.25);
+}
+
+.vcr-btn.play-btn.is-playing {
+  background: #3d1c24;
+  border-color: #f87171;
+  color: #fca5a5;
+  box-shadow: 0 0 12px rgba(248, 113, 113, 0.25);
+}
+
+.vcr-btn.loop-btn.active {
+  background: #1c2738;
+  border-color: #60a5fa;
+  color: #93c5fd;
+}
+
+.speed-pills {
+  display: flex;
+  gap: 3px;
+}
+
+.speed-pill {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font: 9px "DM Mono", monospace;
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.speed-pill.active {
+  background: #253347;
+  border-color: #7dd3fc;
+  color: #7dd3fc;
+  font-weight: 700;
+}
+
+.replay-timeline-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timeline-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font: 11px "DM Mono", monospace;
+}
+
+.timeline-timer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.timeline-timer strong {
+  font-size: 15px;
+  color: var(--text);
+}
+
+.timeline-timer small {
+  color: var(--muted);
+}
+
+.timeline-scope-badge {
+  background: #1e2837;
+  border: 1px solid #3b4e6b;
+  color: #38d995;
+  font: 8px "DM Mono", monospace;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+}
+
+.timeline-distance {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.timeline-distance strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.replay-scrubber-track {
+  position: relative;
+  height: 20px;
+  background: #0c1118;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+}
+
+.scrubber-sector-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 6px;
+  font: 8px "DM Mono", monospace;
+  font-weight: 700;
+  opacity: 0.35;
+  transition: opacity 0.2s;
+}
+
+.scrubber-sector-band.band-focused {
+  opacity: 0.65;
+}
+
+.scrubber-sector-band.s1-band {
+  background: #6b21a8;
+  color: #d8b4fe;
+}
+
+.scrubber-sector-band.s2-band {
+  background: #b45309;
+  color: #fde68a;
+}
+
+.scrubber-sector-band.s3-band {
+  background: #0369a1;
+  color: #bae6fd;
+}
+
+.scrubber-delimiter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.45);
+  z-index: 2;
+}
+
+.scrubber-progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, rgba(56, 217, 149, 0.15), rgba(56, 217, 149, 0.35));
+  border-right: 2px solid #38d995;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.scrubber-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.playhead-indicator {
+  position: absolute;
+  top: -2px;
+  left: -6px;
+  width: 12px;
+  height: 24px;
+  background: #38d995;
+  border: 2px solid #fff;
+  border-radius: 3px;
+  box-shadow: 0 0 8px #38d995;
+}
+
+.replay-chip {
+  background: #172a38;
+  border-color: #38bdf8;
+  color: #7dd3fc;
+}
+
+.replay-view .dashboard-grid {
+  flex: 1;
+  min-height: 0;
+}

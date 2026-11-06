@@ -138,6 +138,14 @@ def create_app(
         """Get in-memory lap history for the current timeline."""
         return live_state.lap_history_snapshot()
 
+    @app.get("/api/laps/current")
+    async def current_lap():
+        """Get the current in-progress lap telemetry samples."""
+        lap = live_state.current_lap_snapshot()
+        if lap is None:
+            raise HTTPException(status_code=404, detail="No active lap in progress")
+        return lap
+
     # ---------------------------------------------------------
     # Persistent lap history APIs (DuckDB)
     # ---------------------------------------------------------
@@ -230,7 +238,7 @@ def create_app(
         api_key = get_gemini_api_key()
         return {
             "hasApiKey": bool(api_key),
-            "model": "gemini-3.5-flash",
+            "model": "gemini-3.5-flash-lite",
         }
 
     @app.post("/api/coach/key")

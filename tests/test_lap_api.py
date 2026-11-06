@@ -255,3 +255,40 @@ def test_snapshot_endpoint_remains_available(client):
     assert "player" in data
     assert "stats" in data
     assert "laps" in data
+
+
+# ---------------------------------------------------------------------
+# Current in-progress lap replay API
+# ---------------------------------------------------------------------
+
+def test_current_lap_returns_404_when_no_active_lap(client):
+    response = client.get("/api/laps/current")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No active lap in progress"
+
+
+def test_current_lap_returns_samples_when_active(repository):
+    from tests.test_lap_recorder import make, pair
+    from krem.core import PacketId
+
+    live_state = LiveState()
+    session = make(PacketId.SESSION, 0)
+    session.data["trackId"] = 10
+    session.data["trackLength"] = 7000
+    live_state.update(session)
+
+    p, t = pair(1, lap=1, elapsed=500, distance=30)
+    live_state.update(p)
+    live_state.update(t)
+
+    app = create_app(live_state, lap_repository=repository)
+    client = TestClient(app)
+
+    response = client.get("/api/laps/current")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["lap"] == 1
+    assert data["inProgress"] is True
+    assert len(data["samples"]) > 0
+    assert "speed" in data["samples"][0]
+    assert "throttle" in data["samples"][0]

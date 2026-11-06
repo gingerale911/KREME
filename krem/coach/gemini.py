@@ -195,7 +195,7 @@ def generate_coach_advice(
     if not measured_corners or not api_key:
         return format_fallback_corner_advice(target_corners)
 
-    MODELS_TO_TRY = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"]
+    MODELS_TO_TRY = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"]
 
     try:
         from google import genai
