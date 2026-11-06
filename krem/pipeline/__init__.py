@@ -31,6 +31,7 @@ from krem.core import (
 )
 from krem.ingest import DecodedPacket
 from krem.pipeline.lap_recorder import LapRecorder
+from krem.pipeline.sector_timing import SectorTiming
 
 
 @dataclass
@@ -129,6 +130,7 @@ class LiveState:
 
     # Recorder owns completed and in-progress laps. Guarded by _lock.
     lap_recorder: LapRecorder = field(default_factory=LapRecorder)
+    sector_timing: SectorTiming = field(default_factory=SectorTiming)
 
     # Frame tracking
     last_update_time: float = 0.0
@@ -152,6 +154,7 @@ class LiveState:
         self.latest_tyre_sets.clear()
         self._packet_times.clear()
         self.events.clear()
+        self.sector_timing = SectorTiming()
 
     def _freshness(self, pid: int, now: float) -> dict[str, Any]:
         received = self._packet_times.get(pid)
@@ -220,6 +223,7 @@ class LiveState:
             elif pid == PacketId.SESSION_HISTORY:
                 car_idx = packet.data["carIdx"]
                 self.latest_session_history[car_idx] = packet
+                self.sector_timing.update(packet)
 
             elif pid == PacketId.TYRE_SETS:
                 car_idx = packet.data["carIdx"]
@@ -331,10 +335,11 @@ class LiveState:
             self.lap_recorder.flush()
             return [_json_safe(item) for item in self.lap_recorder.records]
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, include_laps: bool = True) -> dict[str, Any]:
         """Create a compact, JSON-safe snapshot for API and WebSocket frames."""
         with self._lock:
-            self.lap_recorder.flush()
+            if include_laps:
+                self.lap_recorder.flush()
             idx = self.player_car_index
             player_name, player_number = self._driver_info(idx)
             sector3_time = None
@@ -426,8 +431,13 @@ class LiveState:
                 "events": [
                     _json_safe(event) for event in list(self.events)[-10:]
                 ],
-                "laps": [_json_safe(item) for item in self.lap_recorder.records],
+                "laps": (
+                    [_json_safe(item) for item in self.lap_recorder.records]
+                    if include_laps
+                    else []
+                ),
                 "recorder": self.lap_recorder.status(),
+                "sectorTiming": self.sector_timing.snapshot(self.player, idx, self.lap_recorder.records),
                 "frameCount": self.frame_count,
                 "frameId": self.overall_frame_id,
                 "playerCarIndex": idx,

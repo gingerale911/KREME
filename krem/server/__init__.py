@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -25,6 +26,15 @@ from krem.server.lap_comparison_api import create_lap_comparison_router
 logger = logging.getLogger("krem.server")
 
 WS_FRAME_INTERVAL = 1.0 / 30.0
+
+
+class CoachRequest(BaseModel):
+    lapNum: Optional[int] = None
+    trackId: Optional[int] = None
+
+
+class ApiKeyRequest(BaseModel):
+    apiKey: str
 
 
 def create_app(
@@ -133,7 +143,7 @@ def create_app(
     # ---------------------------------------------------------
 
     @app.get("/api/sessions")
-    async def persistent_sessions():
+    def persistent_sessions():
         """List all persisted sessions."""
 
         if lap_repository is None:
@@ -145,7 +155,7 @@ def create_app(
         return lap_repository.get_sessions()
 
     @app.get("/api/sessions/{session_id}/laps")
-    async def persistent_session_laps(session_id: str):
+    def persistent_session_laps(session_id: str):
         """List completed laps belonging to a session."""
 
         if lap_repository is None:
@@ -168,7 +178,7 @@ def create_app(
         return lap_repository.get_laps(session_id)
 
     @app.get("/api/laps/{lap_id}")
-    async def persistent_lap(lap_id: str):
+    def persistent_lap(lap_id: str):
         """Get an individual persisted lap summary."""
 
         if lap_repository is None:
@@ -188,7 +198,7 @@ def create_app(
         return lap
 
     @app.get("/api/laps/{lap_id}/trace")
-    async def persistent_lap_trace(lap_id: str):
+    def persistent_lap_trace(lap_id: str):
         """Get ordered telemetry samples for a persisted lap."""
 
         if lap_repository is None:
@@ -214,13 +224,6 @@ def create_app(
 
     benchmark_registry = BenchmarkRegistry()
 
-    class CoachRequest(BaseModel):
-        lapNum: Optional[int] = None
-        trackId: Optional[int] = None
-
-    class ApiKeyRequest(BaseModel):
-        apiKey: str
-
     @app.get("/api/coach/status")
     async def coach_status():
         """Check if Gemini API key is configured."""
@@ -239,13 +242,13 @@ def create_app(
         return {"status": "ok", "message": "Gemini API key configured successfully"}
 
     @app.get("/api/db/engine")
-    async def get_db_engine():
+    def get_db_engine():
         """Get current database query engine mode (sqlite vs duckdb)."""
         db = get_db()
         return {"mode": db.mode, "dbPath": str(db.db_path)}
 
     @app.post("/api/db/engine/{mode}")
-    async def set_db_engine(mode: str):
+    def set_db_engine(mode: str):
         """Switch query engine mode between 'sqlite' and 'duckdb'."""
         if mode not in ("sqlite", "duckdb"):
             raise HTTPException(status_code=400, detail="Mode must be 'sqlite' or 'duckdb'")
@@ -254,13 +257,13 @@ def create_app(
         return {"status": "ok", "mode": db.mode, "message": msg}
 
     @app.get("/api/circuits")
-    async def list_circuits():
+    def list_circuits():
         """List all circuits stored in the database."""
         db = get_db()
         return db.list_circuits()
 
     @app.get("/api/circuits/{track_id}")
-    async def get_circuit(track_id: int):
+    def get_circuit(track_id: int):
         """Fetch complete circuit geometry and sections from database."""
         db = get_db()
         circuit = db.get_circuit(track_id)
@@ -269,7 +272,7 @@ def create_app(
         return circuit
 
     @app.get("/api/coach/benchmark/{track_id}")
-    async def get_track_benchmark(track_id: int):
+    def get_track_benchmark(track_id: int):
         """Retrieve the ideal benchmark targets for a track (from SQLite DB or fallback registry)."""
         db = get_db()
         db_bm = db.get_benchmark(track_id)
@@ -282,26 +285,30 @@ def create_app(
         return benchmark.to_dict()
 
     @app.post("/api/coach/analyse")
-    async def analyse_lap(req: CoachRequest | None = None):
+    def analyse_lap(req: CoachRequest | None = None):
         """Analyze the last completed lap against the track's ideal benchmark for the upcoming sector."""
-        session_info = live_state.snapshot()["session"]
-        player_info = live_state.snapshot()["player"]
+        view = live_state.snapshot(include_laps=False)["retainedLive"]
+        session_info, player_info = view["session"], view["player"]
         track_id = (req.trackId if req and req.trackId is not None else session_info.get("trackId", -1))
 
         # Retrieve benchmark for the EXACT track_id
         benchmark = benchmark_registry.get_benchmark(track_id)
+        if benchmark is None or not benchmark.corners:
+            raise HTTPException(status_code=404, detail="No corner targets are available for this circuit.")
+        if track_id != session_info.get("trackId"):
+            raise HTTPException(status_code=409, detail="The circuit changed. Run analysis again for the current circuit.")
 
         lap_history = live_state.lap_history_snapshot()
         target_lap_data = None
 
-        if req and req.lapNum is not None:
-            for l in lap_history:
-                if l.get("lap") == req.lapNum:
-                    target_lap_data = l
-                    break
-
-        if not target_lap_data and lap_history:
-            target_lap_data = lap_history[-1]
+        previous_lap = int(player_info.get("lapNum") or 0) - 1
+        if req and req.lapNum is not None and req.lapNum != previous_lap:
+            raise HTTPException(status_code=409, detail="The lap changed. Run analysis again to use the previous lap.")
+        target_lap_data = next((lap for lap in lap_history if lap.get("lap") == previous_lap), None)
+        if target_lap_data is None:
+            raise HTTPException(status_code=409, detail="Complete a lap first. The coach needs telemetry from the immediately previous lap.")
+        if player_info.get("sector") is None:
+            raise HTTPException(status_code=409, detail="Waiting for the current sector.")
 
         current_sector_idx = int(player_info.get("sector", 0) or 0)
         next_sector = ((current_sector_idx + 1) % 3) + 1
@@ -310,65 +317,35 @@ def create_app(
         lap_time_ms = target_lap_data.get("lapTimeMs", 0) if target_lap_data else 0
         last_lap_num = target_lap_data.get("lap") if target_lap_data else None
 
-        all_deltas = compare_lap_to_benchmark(samples, benchmark)
-        # Ensure EVERY corner in next_sector is present
-        sector_bench_corners = [c for c in benchmark.corners if c.sector == next_sector]
-        deltas_by_turn = {str(d.turn): d for d in all_deltas}
-
-        from krem.coach.comparator import CornerDelta
-        sector_deltas = []
-        for bc in sector_bench_corners:
-            if str(bc.turn) in deltas_by_turn:
-                sector_deltas.append(deltas_by_turn[str(bc.turn)])
-            else:
-                sector_deltas.append(
-                    CornerDelta(
-                        turn=bc.turn,
-                        name=bc.name,
-                        start_m=bc.start_m,
-                        end_m=bc.end_m,
-                        apex_m=bc.apex_m,
-                        sector=bc.sector,
-                        ideal_brake_m=bc.ideal_brake_m,
-                        ideal_apex_speed_kph=bc.ideal_apex_speed_kph,
-                        ideal_apex_gear=bc.ideal_apex_gear,
-                        ideal_throttle_m=bc.ideal_throttle_m,
-                        player_brake_on_m=None,
-                        player_min_speed_kph=bc.ideal_apex_speed_kph,
-                        player_throttle_on_m=None,
-                        brake_delta_m=None,
-                        apex_speed_delta_kph=0.0,
-                        throttle_delta_m=None,
-                        time_loss_s=0.0,
-                        diagnosis="Target ideal line",
-                        notes=bc.notes,
-                    )
-                )
-
-        if not sector_deltas and all_deltas:
-            sector_deltas = all_deltas[:4]
+        sector_deltas = compare_lap_to_benchmark(samples, benchmark, target_sector=next_sector)
 
         advice = generate_coach_advice(
             track=benchmark,
             player_lap_time_ms=lap_time_ms,
-            corner_deltas=all_deltas,
+            corner_deltas=sector_deltas,
             focus_sector=next_sector,
             last_lap_num=last_lap_num,
         )
 
-        db = get_db()
-        circuit_data = db.get_circuit(track_id)
+        advice_by_turn = {}
+        for line in advice.splitlines():
+            match = re.match(r"Turn\s+(\d+[A-Za-z]?)(?:\s*\([^)]*\))?:\s*(.*)", line, re.IGNORECASE)
+            if match:
+                advice_by_turn[match.group(1)] = match.group(2)
+        cards = [dict(d.to_dict(), advice=d.diagnosis if d.status == 'insufficient_data' else advice_by_turn.get(str(d.turn), d.diagnosis)) for d in sector_deltas]
 
         return {
             "track": benchmark.to_dict(),
-            "circuit": circuit_data,
             "lapNum": last_lap_num,
             "lapTimeMs": lap_time_ms,
             "nextSector": next_sector,
             "currentSector": current_sector_idx + 1,
             "hasApiKey": bool(get_gemini_api_key()),
             "deltas": [d.to_dict() for d in sector_deltas],
-            "allDeltas": [d.to_dict() for d in all_deltas],
+            "corners": cards,
+            "lapInvalid": bool(target_lap_data.get("invalid")),
+            "lapPartial": bool(target_lap_data.get("partial")),
+            "targetSource": "Configured coaching targets; not a measured reference lap",
             "advice": advice,
         }
 
@@ -575,7 +552,7 @@ def _dashboard_snapshot(
 ) -> dict:
     """Combine live telemetry and connection statistics."""
 
-    snapshot = live_state.snapshot()
+    snapshot = live_state.snapshot(include_laps=include_laps)
 
     if not include_laps:
         snapshot.pop("laps", None)

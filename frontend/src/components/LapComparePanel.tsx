@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getStoredSessions,
   getSessionLaps,
@@ -184,516 +184,78 @@ function ComparisonGraphs({ result }: { result: LapComparison }) {
 }
 
 
-type SectorLap = StoredLap & {
-  sector1TimeMs?: number | null;
-  sector2TimeMs?: number | null;
-  sector3TimeMs?: number | null;
-};
-
-function SectorAnalysis({
-  referenceLap,
-  comparisonLap,
-}: {
-  referenceLap: StoredLap;
-  comparisonLap: StoredLap;
-}) {
-  const reference = referenceLap as SectorLap;
-  const comparison = comparisonLap as SectorLap;
-  const sectors = [
-    { name: "SECTOR 1", reference: reference.sector1TimeMs, comparison: comparison.sector1TimeMs },
-    { name: "SECTOR 2", reference: reference.sector2TimeMs, comparison: comparison.sector2TimeMs },
-    { name: "SECTOR 3", reference: reference.sector3TimeMs, comparison: comparison.sector3TimeMs },
-  ].map((sector) => ({
-    ...sector,
-    delta: typeof sector.reference === "number" && typeof sector.comparison === "number"
-      ? sector.comparison - sector.reference
-      : null,
-  }));
-
-  const available = sectors.filter((sector) => sector.delta !== null);
-  if (available.length === 0) return null;
-
-  const biggestGain = [...available].sort((a, b) => (a.delta ?? 0) - (b.delta ?? 0))[0];
-  const biggestLoss = [...available].sort((a, b) => (b.delta ?? 0) - (a.delta ?? 0))[0];
-
-  return (
-    <section className="sector-analysis">
-      <div className="sector-analysis-heading">
-        <div>
-          <div className="eyebrow">SECTOR BREAKDOWN</div>
-          <h3>Where the time was won</h3>
-        </div>
-        <span className="panel-chip">COMPARISON − REFERENCE</span>
-      </div>
-
-      <div className="sector-table">
-        <div className="sector-table-row sector-table-header">
-          <span>SECTOR</span><span>REFERENCE</span><span>COMPARISON</span><span>DELTA</span>
-        </div>
-        {sectors.map((sector) => (
-          <div className="sector-table-row" key={sector.name}>
-            <strong>{sector.name}</strong>
-            <span>{typeof sector.reference === "number" ? formatLapTime(sector.reference ?? null) : "—"}</span>
-            <span>{typeof sector.comparison === "number" ? formatLapTime(sector.comparison ?? null) : "—"}</span>
-            <b className={sector.delta === null ? "" : sector.delta < 0 ? "text-green" : sector.delta > 0 ? "text-amber" : ""}>
-              {sector.delta === null ? "—" : formatDelta(sector.delta)}
-            </b>
-          </div>
-        ))}
-      </div>
-
-      <div className="sector-insights">
-        <div>
-          <span>BIGGEST TIME GAIN</span>
-          <strong>{biggestGain.delta !== null && biggestGain.delta < 0 ? biggestGain.name : "—"}</strong>
-          <b className="text-green">{biggestGain.delta !== null && biggestGain.delta < 0 ? formatDelta(biggestGain.delta) : "No gain"}</b>
-        </div>
-        <div>
-          <span>BIGGEST TIME LOSS</span>
-          <strong>{biggestLoss.delta !== null && biggestLoss.delta > 0 ? biggestLoss.name : "—"}</strong>
-          <b className="text-amber">{biggestLoss.delta !== null && biggestLoss.delta > 0 ? formatDelta(biggestLoss.delta) : "No loss"}</b>
-        </div>
-      </div>
-      <p className="sector-analysis-note">Negative delta means the comparison lap was faster in that sector. Positive delta means it was slower.</p>
-    </section>
-  );
-}
+const trackNames: Record<number, string> = {0:"Melbourne",2:"Shanghai",3:"Bahrain",4:"Barcelona",5:"Monaco",6:"Montreal",7:"Silverstone",9:"Hungaroring",10:"Spa",11:"Monza",12:"Singapore",13:"Suzuka",14:"Abu Dhabi",15:"Austin",16:"São Paulo",17:"Austria",19:"Mexico",20:"Baku",26:"Zandvoort",27:"Imola",29:"Jeddah",30:"Miami",31:"Las Vegas",32:"Lusail"};
 
 export default function LapComparePanel() {
   const [sessions, setSessions] = useState<StoredSession[]>([]);
   const [laps, setLaps] = useState<StoredLap[]>([]);
-
   const [sessionId, setSessionId] = useState("");
   const [referenceId, setReferenceId] = useState("");
   const [comparisonId, setComparisonId] = useState("");
-  const [referenceId2, setReferenceId2] = useState("");
-  const [comparisonId2, setComparisonId2] = useState("");
-
   const [result, setResult] = useState<LapComparison | null>(null);
-  const [result2, setResult2] = useState<LapComparison | null>(null);
-
-  const [loadingSessions, setLoadingSessions] = useState(true);
-  const [loadingLaps, setLoadingLaps] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [error, setError] = useState("");
-
+  const [refresh, setRefresh] = useState(0);
+  const request = useRef(0);
   useEffect(() => {
     let active = true;
-
-    async function loadSessions() {
-      setLoadingSessions(true);
-      setError("");
-
-      try {
-        const data = await getStoredSessions();
-
-        if (!active) return;
-
-        setSessions(data);
-
-        if (data.length > 0) {
-          setSessionId(data[0].sessionId);
-        }
-      } catch (err) {
-        if (active) {
-          setError(err instanceof Error ? err.message : "Unable to load sessions");
-        }
-      } finally {
-        if (active) setLoadingSessions(false);
-      }
-    }
-
-    loadSessions();
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
+    setLoading(true); setError("");
+    getStoredSessions().then(data => {
+      if (!active) return;
+      setSessions(data);
+      setSessionId(current => data.some(s => s.sessionId === current) ? current : data[0]?.sessionId ?? "");
+    }).catch(e => { if (active) setError(e.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [refresh]);
   useEffect(() => {
-    if (!sessionId) {
-      setLaps([]);
-      setReferenceId("");
-      setComparisonId("");
-      setReferenceId2("");
-      setComparisonId2("");
-      setResult(null);
-      setResult2(null);
-      return;
-    }
-
     let active = true;
-
-    async function loadLaps() {
-      setLoadingLaps(true);
-      setError("");
-      setResult(null);
-      setResult2(null);
-      setReferenceId("");
-      setComparisonId("");
-      setReferenceId2("");
-      setComparisonId2("");
-
-      try {
-        const data = await getSessionLaps(sessionId);
-
-        if (!active) return;
-
-        setLaps(data);
-
-        if (data.length > 0) {
-          setReferenceId(data[0].lapId);
-          setReferenceId2(data[0].lapId);
-          if (data.length > 1) setComparisonId(data[1].lapId);
-          if (data.length > 2) setComparisonId2(data[2].lapId);
-        }
-      } catch (err) {
-        if (active) {
-          setError(err instanceof Error ? err.message : "Unable to load laps");
-        }
-      } finally {
-        if (active) setLoadingLaps(false);
-      }
-    }
-
-    loadLaps();
-
-    return () => {
-      active = false;
-    };
-  }, [sessionId]);
-
-  async function handleCompare() {
-    const hasA = Boolean(referenceId && comparisonId);
-    const hasB = Boolean(referenceId2 && comparisonId2);
-    if (!hasA && !hasB) return;
-    if (hasA && referenceId === comparisonId) {
-      setError("Comparison A needs two different laps.");
-      return;
-    }
-    if (hasB && referenceId2 === comparisonId2) {
-      setError("Comparison B needs two different laps.");
-      return;
-    }
-
-    setComparing(true);
-    setError("");
-    setResult(null);
-    setResult2(null);
-
+    request.current++; setComparing(false); setResult(null); setLaps([]); setError("");
+    setReferenceId(""); setComparisonId("");
+    if (!sessionId) return;
+    setLoading(true);
+    getSessionLaps(sessionId).then(data => {
+      if (!active) return;
+      setLaps(data); setReferenceId(data[0]?.lapId ?? ""); setComparisonId(data[1]?.lapId ?? "");
+    }).catch(e => { if (active) setError(e.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; request.current++; };
+  }, [sessionId, refresh]);
+  const selectLap = (id: string, reference: boolean) => {
+    request.current++; setComparing(false); setResult(null); setError("");
+    if (reference) setReferenceId(id); else setComparisonId(id);
+  };
+  const compare = async () => {
+    const token = ++request.current;
+    setComparing(true); setError(""); setResult(null);
     try {
-      const requests: Promise<LapComparison>[] = [];
-      if (hasA) requests.push(getLapComparison(referenceId, comparisonId));
-      if (hasB) requests.push(getLapComparison(referenceId2, comparisonId2));
-      const responses = await Promise.all(requests);
-      let responseIndex = 0;
-      if (hasA) setResult(responses[responseIndex++]);
-      if (hasB) setResult2(responses[responseIndex]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Lap comparison failed");
-    } finally {
-      setComparing(false);
-    }
-  }
-
-  const referenceLap = laps.find((lap) => lap.lapId === referenceId);
-  const comparisonLap = laps.find((lap) => lap.lapId === comparisonId);
-  const referenceLap2 = laps.find((lap) => lap.lapId === referenceId2);
-  const comparisonLap2 = laps.find((lap) => lap.lapId === comparisonId2);
-
-  return (
-    <section className="lap-tab-panel">
-      <div className="lap-layout lap-persistent-layout">
-        <article className="panel lap-main-panel">
-          <div className="panel-heading">
-            <div>
-              <div className="eyebrow">PERSISTENT LAP ANALYSIS</div>
-              <h2>Lap comparison</h2>
-            </div>
-            <span className="panel-chip">{laps.length} STORED LAPS</span>
-          </div>
-
-          <div className="persistent-selectors">
-            <label className="persistent-field">
-              <span>SESSION</span>
-              <select
-                value={sessionId}
-                disabled={loadingSessions || sessions.length === 0}
-                onChange={(event) => setSessionId(event.target.value)}
-              >
-                {sessions.length === 0 && <option value="">No sessions available</option>}
-                {sessions.map((session) => (
-                  <option key={session.sessionId} value={session.sessionId}>
-                    Track {session.trackId ?? "Unknown"} · {session.lapCount} laps
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="persistent-field">
-              <span>REFERENCE LAP</span>
-              <select
-                value={referenceId}
-                disabled={loadingLaps || laps.length === 0}
-                onChange={(event) => {
-                  setReferenceId(event.target.value);
-                  setResult(null);
-                }}
-              >
-                {laps.map((lap) => (
-                  <option key={lap.lapId} value={lap.lapId}>
-                    Lap {lap.lapNumber} · {formatLapTime(lap.lapTimeMs)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="persistent-field">
-              <span>COMPARISON LAP</span>
-              <select
-                value={comparisonId}
-                disabled={loadingLaps || laps.length < 2}
-                onChange={(event) => {
-                  setComparisonId(event.target.value);
-                  setResult(null);
-                }}
-              >
-                {laps.map((lap) => (
-                  <option key={lap.lapId} value={lap.lapId}>
-                    Lap {lap.lapNumber} · {formatLapTime(lap.lapTimeMs)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="persistent-field comparison-slot-label">
-              <span>COMPARISON B · REFERENCE LAP</span>
-              <select
-                value={referenceId2}
-                disabled={loadingLaps || laps.length === 0}
-                onChange={(event) => { setReferenceId2(event.target.value); setResult2(null); }}
-              >
-                <option value="">Select lap</option>
-                {laps.map((lap) => (
-                  <option key={lap.lapId} value={lap.lapId}>Lap {lap.lapNumber} · {formatLapTime(lap.lapTimeMs)}</option>
-                ))}
-              </select>
-            </label>
-
-            <label className="persistent-field comparison-slot-label">
-              <span>COMPARISON B · COMPARISON LAP</span>
-              <select
-                value={comparisonId2}
-                disabled={loadingLaps || laps.length < 2}
-                onChange={(event) => { setComparisonId2(event.target.value); setResult2(null); }}
-              >
-                <option value="">Select lap</option>
-                {laps.map((lap) => (
-                  <option key={lap.lapId} value={lap.lapId}>Lap {lap.lapNumber} · {formatLapTime(lap.lapTimeMs)}</option>
-                ))}
-              </select>
-            </label>
-
-            <button
-              className="persistent-compare-button"
-              disabled={
-                comparing ||
-                loadingLaps ||
-                (!referenceId || !comparisonId || referenceId === comparisonId) &&
-                (!referenceId2 || !comparisonId2 || referenceId2 === comparisonId2)
-              }
-              onClick={handleCompare}
-            >
-              {comparing ? "COMPARING..." : "RUN SELECTED COMPARISONS"}
-            </button>
-          </div>
-
-          {loadingSessions && (
-            <div className="persistent-message">LOADING STORED SESSIONS...</div>
-          )}
-
-          {loadingLaps && (
-            <div className="persistent-message">LOADING SESSION LAPS...</div>
-          )}
-
-          {!loadingSessions && sessions.length === 0 && !error && (
-            <div className="persistent-empty">
-              <strong>NO PERSISTED SESSIONS</strong>
-              <span>Complete and record laps in F1 25 to populate lap history.</span>
-            </div>
-          )}
-
-          {!loadingLaps && sessions.length > 0 && laps.length === 0 && !error && (
-            <div className="persistent-empty">
-              <strong>NO COMPLETED LAPS</strong>
-              <span>This session does not have any stored laps yet.</span>
-            </div>
-          )}
-
-          {laps.length === 1 && (
-            <div className="persistent-message">
-              At least two stored laps are required for comparison.
-            </div>
-          )}
-
-          {error && (
-            <div className="persistent-error" role="alert">
-              {error}
-            </div>
-          )}
-
-          {referenceLap && comparisonLap && (
-            <div className="persistent-lap-cards">
-              <div className="lap-card lap-card-current">
-                <span className="lap-card-label">REFERENCE</span>
-                <strong>Lap {referenceLap.lapNumber}</strong>
-                <div className="lap-card-row">
-                  <span>TIME</span>
-                  <b>{formatLapTime(referenceLap.lapTimeMs)}</b>
-                </div>
-                <div className="lap-card-row">
-                  <span>AVG SPEED</span>
-                  <b>{referenceLap.avgSpeedKph?.toFixed(1) ?? "—"} km/h</b>
-                </div>
-                <div className="lap-card-row">
-                  <span>STATUS</span>
-                  <b>{referenceLap.invalid ? "INVALID" : referenceLap.partial ? "PARTIAL" : "VALID"}</b>
-                </div>
-              </div>
-
-              <div className="lap-card">
-                <span className="lap-card-label">COMPARISON</span>
-                <strong>Lap {comparisonLap.lapNumber}</strong>
-                <div className="lap-card-row">
-                  <span>TIME</span>
-                  <b>{formatLapTime(comparisonLap.lapTimeMs)}</b>
-                </div>
-                <div className="lap-card-row">
-                  <span>AVG SPEED</span>
-                  <b>{comparisonLap.avgSpeedKph?.toFixed(1) ?? "—"} km/h</b>
-                </div>
-                <div className="lap-card-row">
-                  <span>STATUS</span>
-                  <b>{comparisonLap.invalid ? "INVALID" : comparisonLap.partial ? "PARTIAL" : "VALID"}</b>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {referenceLap2 && comparisonLap2 && (
-            <div className="comparison-slot-summary">
-              <div className="comparison-slot-summary-heading">COMPARISON B · SELECTED LAPS</div>
-              <div className="persistent-lap-cards">
-                <div className="lap-card lap-card-current">
-                  <span className="lap-card-label">REFERENCE</span>
-                  <strong>Lap {referenceLap2.lapNumber}</strong>
-                  <div className="lap-card-row"><span>TIME</span><b>{formatLapTime(referenceLap2.lapTimeMs)}</b></div>
-                  <div className="lap-card-row"><span>AVG SPEED</span><b>{referenceLap2.avgSpeedKph?.toFixed(1) ?? "—"} km/h</b></div>
-                  <div className="lap-card-row"><span>STATUS</span><b>{referenceLap2.invalid ? "INVALID" : referenceLap2.partial ? "PARTIAL" : "VALID"}</b></div>
-                </div>
-                <div className="lap-card">
-                  <span className="lap-card-label">COMPARISON</span>
-                  <strong>Lap {comparisonLap2.lapNumber}</strong>
-                  <div className="lap-card-row"><span>TIME</span><b>{formatLapTime(comparisonLap2.lapTimeMs)}</b></div>
-                  <div className="lap-card-row"><span>AVG SPEED</span><b>{comparisonLap2.avgSpeedKph?.toFixed(1) ?? "—"} km/h</b></div>
-                  <div className="lap-card-row"><span>STATUS</span><b>{comparisonLap2.invalid ? "INVALID" : comparisonLap2.partial ? "PARTIAL" : "VALID"}</b></div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {result && (
-            <div className="persistent-result">
-              <div>
-                <span>TOTAL TIME DELTA</span>
-                <strong className={result.totalTimeDeltaMs <= 0 ? "text-green" : "text-amber"}>
-                  {formatDelta(result.totalTimeDeltaMs)}
-                </strong>
-              </div>
-              <div>
-                <span>COMMON TRACK</span>
-                <strong>{result.commonTrackLength.toFixed(0)} m</strong>
-              </div>
-              <div>
-                <span>VALID DELTA POINTS</span>
-                <strong>{result.validDeltaPoints} / {result.gridPoints}</strong>
-              </div>
-            </div>
-          )}
-
-          {result && referenceLap && comparisonLap && (
-            <SectorAnalysis referenceLap={referenceLap} comparisonLap={comparisonLap} />
-          )}
-
-          {result2 && (
-            <div className="persistent-result comparison-result-secondary">
-              <div>
-                <span>COMPARISON B · TOTAL TIME DELTA</span>
-                <strong className={result2.totalTimeDeltaMs <= 0 ? "text-green" : "text-amber"}>{formatDelta(result2.totalTimeDeltaMs)}</strong>
-              </div>
-              <div>
-                <span>COMMON TRACK</span>
-                <strong>{result2.commonTrackLength.toFixed(0)} m</strong>
-              </div>
-              <div>
-                <span>VALID DELTA POINTS</span>
-                <strong>{result2.validDeltaPoints} / {result2.gridPoints}</strong>
-              </div>
-            </div>
-          )}
-          {result2 && referenceLap2 && comparisonLap2 && (
-            <SectorAnalysis referenceLap={referenceLap2} comparisonLap={comparisonLap2} />
-          )}
-
-          <div className="session-store-note">
-            DATA SOURCE · DUCKDB PERSISTENT LAP STORAGE
-          </div>
-        </article>
-
-        <article className="panel lap-graph-panel persistent-preview-panel">
-          <div className="panel-heading">
-            <div>
-              <div className="eyebrow">COMPARISON ENGINE</div>
-              <h2>Telemetry alignment</h2>
-            </div>
-            <span className="panel-chip">DISTANCE ALIGNED</span>
-          </div>
-
-          {result || result2 ? (
-            <div className={`comparison-pair-graphs ${result && result2 ? "has-two-pairs" : "has-one-pair"}`}>
-              {result && (
-                <section className="comparison-pair-column">
-                  <div className="comparison-pair-title">COMPARISON A · LAP {referenceLap?.lapNumber} vs LAP {comparisonLap?.lapNumber}</div>
-                  <div className="persistent-preview-summary">
-                    <div className="persistent-preview-stat"><span>REFERENCE LAP TIME</span><strong>{formatLapTime(result.referenceLapTimeMs)}</strong></div>
-                    <div className="persistent-preview-stat"><span>COMPARISON LAP TIME</span><strong>{formatLapTime(result.comparisonLapTimeMs)}</strong></div>
-                    <div className="persistent-preview-stat"><span>SHARED DISTANCE GRID</span><strong>{result.gridPoints} POINTS</strong></div>
-                    <div className="persistent-preview-stat"><span>TELEMETRY SAMPLES</span><strong>{result.validDeltaPoints} ALIGNED</strong></div>
-                  </div>
-                  <ComparisonGraphs result={result} />
-                </section>
-              )}
-              {result2 && (
-                <section className="comparison-pair-column">
-                  <div className="comparison-pair-title">COMPARISON B · LAP {referenceLap2?.lapNumber} vs LAP {comparisonLap2?.lapNumber}</div>
-                  <div className="persistent-preview-summary">
-                    <div className="persistent-preview-stat"><span>REFERENCE LAP TIME</span><strong>{formatLapTime(result2.referenceLapTimeMs)}</strong></div>
-                    <div className="persistent-preview-stat"><span>COMPARISON LAP TIME</span><strong>{formatLapTime(result2.comparisonLapTimeMs)}</strong></div>
-                    <div className="persistent-preview-stat"><span>SHARED DISTANCE GRID</span><strong>{result2.gridPoints} POINTS</strong></div>
-                    <div className="persistent-preview-stat"><span>TELEMETRY SAMPLES</span><strong>{result2.validDeltaPoints} ALIGNED</strong></div>
-                  </div>
-                  <ComparisonGraphs result={result2} />
-                </section>
-              )}
-            </div>
-          ) : (
-            <div className="persistent-empty persistent-graph-empty">
-              <strong>AWAITING LAP SELECTION</strong>
-              <span>Select either or both independent lap pairs and run the comparison to load their distance-aligned telemetry side by side.</span>
-            </div>
-          )}
-        </article>
-      </div>
-    </section>
-  );
+      const response = await getLapComparison(referenceId, comparisonId);
+      if (token === request.current) setResult(response);
+    } catch (e) { if (token === request.current) setError(e instanceof Error ? e.message : "Comparison failed"); }
+    finally { if (token === request.current) setComparing(false); }
+  };
+  const reference = laps.find(l => l.lapId === referenceId);
+  const comparison = laps.find(l => l.lapId === comparisonId);
+  return <section className="comparison-workspace">
+    <header className="comparison-header"><div><span className="eyebrow">LAP ANALYSIS</span><h2>Compare two laps</h2><p>Choose a reference, then see where your comparison lap gains or loses time.</p></div><button onClick={() => setRefresh(v => v + 1)} disabled={loading}>Refresh laps</button></header>
+    <div className="compare-controls">
+      <label>Session<select value={sessionId} disabled={loading} onChange={e => setSessionId(e.target.value)}><option value="" disabled>Select session</option>{sessions.map(s => <option key={s.sessionId} value={s.sessionId}>{trackNames[s.trackId ?? -1] ?? `Track ${s.trackId ?? "—"}`} · {s.startedAt ? new Date(s.startedAt).toLocaleString() : s.sessionId.slice(-8)} · {s.lapCount} laps</option>)}</select></label>
+      {[true, false].map(isReference => <label key={String(isReference)}>{isReference ? "Reference lap" : "Comparison lap"}<select value={isReference ? referenceId : comparisonId} disabled={loading || !laps.length} onChange={e => selectLap(e.target.value, isReference)}><option value="" disabled>Select lap</option>{laps.map(l => <option key={l.lapId} value={l.lapId}>Lap {l.lapNumber} · {formatLapTime(l.lapTimeMs)}{l.invalid ? " · invalid" : l.partial ? " · partial" : ""}</option>)}</select></label>)}
+      <button className="persistent-compare-button" onClick={compare} disabled={loading || comparing || !referenceId || !comparisonId || referenceId === comparisonId}>{comparing ? "Comparing…" : "Compare laps"}</button>
+    </div>
+    {error && <p className="persistent-error" role="alert">{error}</p>}
+    {loading && <p role="status" className="persistent-message">Loading laps…</p>}
+    {reference && comparison && <div className="compare-summary">
+      <div><span>REFERENCE · LAP {reference.lapNumber}</span><strong>{formatLapTime(reference.lapTimeMs)}</strong><small>{reference.invalid ? "Invalid lap" : reference.partial ? "Partial recording" : "Valid lap"}</small></div>
+      <div><span>COMPARISON · LAP {comparison.lapNumber}</span><strong>{formatLapTime(comparison.lapTimeMs)}</strong><small>{comparison.invalid ? "Invalid lap" : comparison.partial ? "Partial recording" : "Valid lap"}</small></div>
+      <div><span>TIME DIFFERENCE</span><strong className={result && result.totalTimeDeltaMs < 0 ? "text-green" : "text-amber"}>{result ? `${result.totalTimeDeltaMs > 0 ? "+" : ""}${(result.totalTimeDeltaMs / 1000).toFixed(3)}s` : "—"}</strong><small>Negative = comparison faster</small></div>
+      {[1,2,3].map(n => {
+        const key = `sector${n}TimeMs` as "sector1TimeMs" | "sector2TimeMs" | "sector3TimeMs";
+        const a = reference[key], b = comparison[key];
+        return <div key={n}><span>SECTOR {n}</span><strong className={a && b && b <= a ? "text-green" : "text-amber"}>{a && b ? formatDelta(b-a) : "—"}</strong><small>{formatLapTime(a)} → {formatLapTime(b)}</small></div>;
+      })}
+    </div>}
+    {result ? <><ComparisonGraphs result={result} /><details className="comparison-quality"><summary>Recording quality</summary><p>{result.validDeltaPoints} of {result.gridPoints} distance points have comparable timing. Gaps remain visible in the charts.</p><p>{[...(reference?.qualityReasons ?? []), ...(comparison?.qualityReasons ?? [])].join(" · ") || "No recording quality flags."}</p></details></> : !loading && <div className="compare-empty"><strong>{sessions.length === 0 ? "No recorded sessions yet" : laps.length < 2 ? "Two completed laps are needed" : "Ready to compare"}</strong><p>{laps.length < 2 ? "Complete two laps in the same session, then refresh." : "Select two different laps and choose Compare laps."}</p></div>}
+  </section>;
 }

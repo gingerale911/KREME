@@ -109,6 +109,7 @@ class DatabaseManager:
         con = sqlite3.connect(str(self.db_path), timeout=30.0)
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA foreign_keys = ON;")
+        con.execute("PRAGMA journal_mode = WAL;")
         return con
 
     def _init_sqlite(self) -> None:

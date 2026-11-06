@@ -219,3 +219,19 @@ KREM/
   comparison UI; consolidated overlapping sector-analysis styles.
 - Validation: 156 backend tests passed and the frontend production build passed.
 - Live-game validation remains pending.
+
+## Live race responsiveness update — 2026-11-06
+
+- Live WebSocket and player/session reads now omit lap sample conversion at the source; completed history stays available through history APIs. Previously every 30 Hz update walked all stored samples before removing them.
+- Moved blocking storage, comparison and coach routes into FastAPI workers. Serialized optional circuit-engine access and singleton initialization for concurrent requests. Saved laps remain intact; no database migration or deletion.
+- Live map now loads only the current circuit from static JSON, independently updates from motion packets, retains circuit identity across delayed session packets, and adds colored cars, YOU marker, recent trail and start/finish label.
+- Fixed chart sampling at fixed game time on the starting grid and after flashbacks. Repeated samples and explicit paused/stale feeds do not extend traces.
+- Audited every Player values source with changing synthetic packets and the recorded race. Corrected joules-to-MJ display, compound names and unavailable suggested gear. Retained readings have per-source LIVE/LAST RECEIVED/UNAVAILABLE labels.
+- Validation: 163 backend tests; 3 frontend sampling tests; TypeScript/Vite build; browser replay verified map, values and rendered traces. Recorded-capture snapshot average improved from about 24 ms to 0.43 ms (snapshot computation only, not end-to-end game latency).
+- Restart the existing backend and refresh the dashboard to load these changes. No fresh live-game latency measurement was performed.
+
+## Restored dashboard edits — 2026-11-06
+- Recovered the compact race layout, larger map, right-side car health, lap comparison layout, glowing AI button and dismissible analysis overlay from saved edit records.
+- Restored turn cards and stacking fixes, independent damage ranges, and tyre health (100 minus wear).
+- Restored sector clocks, previous-lap/upcoming-sector selection, deterministic pace grades, repeated-timestamp handling and constant-input observations. Missing recordings remain explicit; Gemini cannot replace missing evidence with generic driving instructions.
+- Verification: 176 backend tests, 4 frontend tests and the production build passed. Runtime restart remains necessary to load backend code.

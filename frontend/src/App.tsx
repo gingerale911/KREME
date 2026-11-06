@@ -1,5 +1,6 @@
 import CarStatusPanel from "./components/CarStatusPanel";
 import LapComparePanel from "./components/LapComparePanel";
+import CoachCards, { type CoachAnalysisResponse } from "./components/CoachCards";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
@@ -129,59 +130,8 @@ interface PacketFreshness {
   ageSeconds: number | null;
 }
 
-interface CornerDeltaUI {
-  turn: string;
-  name: string;
-  apex_m: number;
-  sector: number;
-  ideal_brake_m: number;
-  ideal_apex_speed_kph: number;
-  ideal_apex_gear: number;
-  player_brake_on_m?: number | null;
-  player_min_speed_kph: number;
-  player_throttle_on_m?: number | null;
-  brake_delta_m?: number | null;
-  apex_speed_delta_kph: number;
-  throttle_delta_m?: number | null;
-  time_loss_s: number;
-  diagnosis: string;
-  notes: string;
-}
-
-interface CoachAnalysisResponse {
-  track?: {
-    track_id: number;
-    track_name: string;
-    track_length_m: number;
-    ideal_lap_time_ms: number;
-    sector1_end_m?: number;
-    sector2_end_m?: number;
-    corners?: Array<{
-      turn: string;
-      name: string;
-      start_m: number;
-      end_m: number;
-      apex_m: number;
-      sector: number;
-      ideal_brake_m?: number;
-      ideal_apex_speed_kph?: number;
-      ideal_apex_gear?: number;
-      ideal_throttle_m?: number;
-      notes?: string;
-    }>;
-  };
-  lapNum?: number | null;
-  lapTimeMs?: number;
-  nextSector?: number;
-  currentSector?: number;
-  hasApiKey: boolean;
-  deltas: CornerDeltaUI[];
-  allDeltas?: CornerDeltaUI[];
-  advice: string;
-  circuit?: any;
-}
-
 interface TelemetrySnapshot {
+  sectorTiming?: Array<{ sector: number; state: string; timeMs: number | null; grade: string }>;
   liveStreamId?: string;
   gamePaused?: boolean;
   telemetrySample?: { id: string; sessionTime: number } | null;
@@ -195,6 +145,7 @@ interface TelemetrySnapshot {
   events?: Array<string | TelemetryEvent>;
   laps?: LapSummary[];
   frameCount?: MaybeNumber;
+  playerCarIndex?: MaybeNumber;
 }
 
 interface PlotPoint {
@@ -216,6 +167,7 @@ interface TrackOutline {
   rightEdge: Position[];
   racingLine: Position[];
   orientation: number;
+  sfLine?: { pos: [number, number]; heading?: number };
 }
 
 const HISTORY_LIMIT = 360;
@@ -445,6 +397,12 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
   const trackRacingLine = bounds && trackOutline
     ? toSvgPath(rotateTrackPoints(trackOutline.racingLine, trackOutline.orientation), bounds.project, false)
     : "";
+  const sfLeft = bounds && trackOutline?.leftEdge?.length
+    ? bounds.project(rotateTrackPoints([trackOutline.leftEdge[0]], trackOutline.orientation)[0])
+    : null;
+  const sfRight = bounds && trackOutline?.rightEdge?.length
+    ? bounds.project(rotateTrackPoints([trackOutline.rightEdge[0]], trackOutline.orientation)[0])
+    : null;
 
   return (
     <div className="map-wrap">
@@ -457,8 +415,30 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
         <rect width="1000" height="560" fill="url(#map-grid)" />
         {trackOutline && trackSurfacePath ? (
           <>
-            <path d={trackSurfacePath} fill="rgba(44, 180, 166, 0.12)" stroke="rgba(78, 220, 193, 0.9)" strokeWidth={1.1} />
-            <path d={trackRacingLine} fill="none" stroke="rgba(138, 173, 255, 0.72)" strokeWidth={1.2} strokeDasharray="4 4" />
+            <path d={trackSurfacePath} className="circuit-halo" />
+            <path d={trackSurfacePath} className="circuit-surface" />
+            <path d={trackRacingLine} className="circuit-racing-line" />
+            {sfLeft && sfRight && (
+              <g className="map-start">
+                <line x1={sfLeft.x} y1={sfLeft.y} x2={sfRight.x} y2={sfRight.y} className="sf-line" />
+                <rect
+                  x={(sfLeft.x + sfRight.x) / 2 - 13}
+                  y={(sfLeft.y + sfRight.y) / 2 - 7}
+                  width="26"
+                  height="14"
+                  rx="3"
+                  className="sf-badge"
+                />
+                <text
+                  x={(sfLeft.x + sfRight.x) / 2}
+                  y={(sfLeft.y + sfRight.y) / 2 + 3.5}
+                  textAnchor="middle"
+                  className="sf-badge-text"
+                >
+                  S/F
+                </text>
+              </g>
+            )}
           </>
         ) : (
           hasTrack && path && (
@@ -467,6 +447,15 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
               <polyline points={path} className="track-line" />
             </>
           )
+        )}
+        {bounds && liveTracePoints.length > 1 && (
+          <polyline
+            points={(trackOutline ? liveTracePoints.slice(-90) : liveTracePoints).map((point) => {
+              const projected = bounds.project(point);
+              return `${projected.x.toFixed(1)},${projected.y.toFixed(1)}`;
+            }).join(" ")}
+            className="player-trail"
+          />
         )}
         {cars.map((car, index) => {
           if (!bounds || !isNumber(car.worldX) || !isNumber(car.worldZ)) return null;
@@ -529,9 +518,9 @@ function MiniChart({ points, mode }: { points: PlotPoint[]; mode: "speed" | "ped
   const innerHeight = height - padding.top - padding.bottom;
   const x = (index: number) => padding.left + (points.length <= 1 ? 0 : (index / (points.length - 1)) * innerWidth);
   const y = (value: number) => padding.top + innerHeight - Math.max(0, Math.min(value, maxY)) / maxY * innerHeight;
-  const speedPath = points.map((point, index) => `${index && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.speed).toFixed(1)}`).join(" ");
-  const throttlePath = points.map((point, index) => `${index && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.throttle * 100).toFixed(1)}`).join(" ");
-  const brakePath = points.map((point, index) => `${index && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.brake * 100).toFixed(1)}`).join(" ");
+  const speedPath = points.map((point, index) => `${index > 0 && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.speed).toFixed(1)}`).join(" ");
+  const throttlePath = points.map((point, index) => `${index > 0 && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.throttle * 100).toFixed(1)}`).join(" ");
+  const brakePath = points.map((point, index) => `${index > 0 && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.brake * 100).toFixed(1)}`).join(" ");
   const gridValues = mode === "speed" ? [0, maxY / 2, maxY] : [0, 50, 100];
 
   return (
@@ -556,443 +545,18 @@ function MiniChart({ points, mode }: { points: PlotPoint[]; mode: "speed" | "ped
   );
 }
 
-interface CoachMiniMapProps {
-  trackOutline: TrackOutline | null;
-  circuit?: any;
-  trackBenchmark?: CoachAnalysisResponse["track"];
-  nextSector: number;
-  deltas?: CornerDeltaUI[];
-  allDeltas?: CornerDeltaUI[];
-  advice?: string;
-}
-
-function CoachMiniMap({ trackOutline, circuit, trackBenchmark, nextSector, deltas = [], allDeltas = [], advice = "" }: CoachMiniMapProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [hovered, setHovered] = useState<{
-    turn: string;
-    name: string;
-    needsImprovement: boolean;
-    timeLoss: number;
-    delta?: CornerDeltaUI;
-    x: number;
-    y: number;
-  } | null>(null);
-
-  const rawRacingLine: Position[] = useMemo(() => {
-    if (trackOutline?.racingLine && trackOutline.racingLine.length > 0) {
-      return trackOutline.racingLine;
-    }
-    const f1Line = circuit?.lines?.formula1?.racing_line;
-    if (Array.isArray(f1Line) && f1Line.length > 0) {
-      return f1Line.map((pt: any) =>
-        Array.isArray(pt) ? { x: Number(pt[0]), z: Number(pt[1]) } : { x: Number(pt.x), z: Number(pt.z) }
-      );
-    }
-    return [];
-  }, [trackOutline, circuit]);
-
-  const rawLeftEdge: Position[] = useMemo(() => {
-    if (trackOutline?.leftEdge && trackOutline.leftEdge.length > 0) return trackOutline.leftEdge;
-    if (Array.isArray(circuit?.left_edge) && circuit.left_edge.length > 0) {
-      return circuit.left_edge.map((pt: any) =>
-        Array.isArray(pt) ? { x: Number(pt[0]), z: Number(pt[1]) } : { x: Number(pt.x), z: Number(pt.z) }
-      );
-    }
-    return [];
-  }, [trackOutline, circuit]);
-
-  const rawRightEdge: Position[] = useMemo(() => {
-    if (trackOutline?.rightEdge && trackOutline.rightEdge.length > 0) return trackOutline.rightEdge;
-    if (Array.isArray(circuit?.right_edge) && circuit.right_edge.length > 0) {
-      return circuit.right_edge.map((pt: any) =>
-        Array.isArray(pt) ? { x: Number(pt[0]), z: Number(pt[1]) } : { x: Number(pt.x), z: Number(pt.z) }
-      );
-    }
-    return [];
-  }, [trackOutline, circuit]);
-
-  const orientation = Number(trackOutline?.orientation ?? circuit?.orientation ?? 0);
-
-  const rotatedRacingLine = useMemo(
-    () => (rawRacingLine.length > 0 ? rotateTrackPoints(rawRacingLine, orientation) : []),
-    [rawRacingLine, orientation]
-  );
-  const rotatedLeftEdge = useMemo(
-    () => (rawLeftEdge.length > 0 ? rotateTrackPoints(rawLeftEdge, orientation) : []),
-    [rawLeftEdge, orientation]
-  );
-  const rotatedRightEdge = useMemo(
-    () => (rawRightEdge.length > 0 ? rotateTrackPoints(rawRightEdge, orientation) : []),
-    [rawRightEdge, orientation]
-  );
-
-  const bounds = useMemo(() => {
-    const points =
-      rotatedLeftEdge.length > 0 && rotatedRightEdge.length > 0
-        ? [...rotatedLeftEdge, ...rotatedRightEdge]
-        : rotatedRacingLine;
-    if (!points.length) return null;
-
-    const xs = points.map((p) => p.x);
-    const zs = points.map((p) => p.z);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minZ = Math.min(...zs);
-    const maxZ = Math.max(...zs);
-    const spanX = Math.max(maxX - minX, 20);
-    const spanZ = Math.max(maxZ - minZ, 20);
-    const padX = spanX * 0.12;
-    const padZ = spanZ * 0.12;
-    const width = 860;
-    const height = 260;
-    const scale = Math.min((width - 60) / (spanX + padX * 2), (height - 50) / (spanZ + padZ * 2));
-    const offsetX = (width - (spanX + padX * 2) * scale) / 2;
-    const offsetY = (height - (spanZ + padZ * 2) * scale) / 2;
-
-    const project = (point: Position) => ({
-      x: offsetX + (point.x - minX + padX) * scale,
-      y: offsetY + (point.z - minZ + padZ) * scale,
-    });
-
-    return { project, width, height };
-  }, [rotatedLeftEdge, rotatedRightEdge, rotatedRacingLine]);
-
-  const trackLength = Number(trackBenchmark?.track_length_m || circuit?.game_track_length_m || 5000);
-
-  // Focus sector corners with cross-referenced pace and telemetry check
-  const targetCorners = useMemo(() => {
-    const benchCorners = (trackBenchmark?.corners ?? []).filter((c) => c.sector === nextSector);
-    const sourceList = benchCorners.length > 0 ? benchCorners : deltas;
-
-    return sourceList.map((corner: any) => {
-      const turnStr = String(corner.turn || "");
-      const matchingDelta = (deltas ?? []).find((d) => {
-        const dTurn = String(d.turn || "");
-        if (dTurn === turnStr) return true;
-        const rangeMatch = dTurn.match(/(\d+)\s*[-–]\s*(\d+)/);
-        if (rangeMatch) {
-          const start = parseInt(rangeMatch[1], 10);
-          const end = parseInt(rangeMatch[2], 10);
-          const cur = parseInt(turnStr, 10);
-          return cur >= start && cur <= end;
-        }
-        return false;
-      }) || (allDeltas ?? []).find((d) => String(d.turn) === turnStr);
-
-      let needsImprovement = false;
-      let timeLoss = matchingDelta ? Number(matchingDelta.time_loss_s || 0) : 0;
-
-      if (matchingDelta) {
-        const diag = (matchingDelta.diagnosis || "").toLowerCase();
-        const hasDeficitDiag = Boolean(diag && !diag.includes("clean") && !diag.includes("optimal"));
-        const hasBrakeDelta = matchingDelta.brake_delta_m !== undefined && matchingDelta.brake_delta_m !== null && Math.abs(matchingDelta.brake_delta_m) >= 10;
-        const hasApexDelta = matchingDelta.apex_speed_delta_kph !== undefined && matchingDelta.apex_speed_delta_kph <= -8;
-        const hasThrottleDelta = matchingDelta.throttle_delta_m !== undefined && matchingDelta.throttle_delta_m !== null && matchingDelta.throttle_delta_m >= 10;
-
-        if (timeLoss > 0.03 || hasDeficitDiag || hasBrakeDelta || hasApexDelta || hasThrottleDelta) {
-          needsImprovement = true;
-        }
-      }
-
-      if (advice) {
-        const adviceLines = advice.split("\n");
-        for (const line of adviceLines) {
-          const lineLower = line.toLowerCase();
-          const turnMatch = lineLower.match(/turns?\s*(\d+)(?:\s*[-–]\s*(\d+))?/i);
-          if (turnMatch) {
-            const t1 = parseInt(turnMatch[1], 10);
-            const t2 = turnMatch[2] ? parseInt(turnMatch[2], 10) : t1;
-            const curTurn = parseInt(turnStr, 10);
-            if (curTurn >= t1 && curTurn <= t2) {
-              if (!lineLower.includes("on pace") && (
-                lineLower.includes("brake") || lineLower.includes("push") || lineLower.includes("target") ||
-                lineLower.includes("shift") || lineLower.includes("lift") || lineLower.includes("throttle") ||
-                lineLower.includes("deeper") || lineLower.includes("earlier") || lineLower.includes("drop") ||
-                lineLower.includes("bleed") || lineLower.includes("loss") || lineLower.includes("overslow")
-              )) {
-                needsImprovement = true;
-                if (timeLoss === 0) timeLoss = 0.15;
-              }
-            }
-          }
-        }
-      }
-
-      return {
-        turn: turnStr,
-        name: corner.name && corner.name !== `Turn ${turnStr}` ? corner.name : "",
-        start_m: corner.start_m ?? Math.max(0, (corner.apex_m || 100) - 45),
-        end_m: corner.end_m ?? ((corner.apex_m || 100) + 45),
-        apex_m: corner.apex_m || 100,
-        sector: corner.sector || nextSector,
-        delta: matchingDelta,
-        needsImprovement,
-        timeLoss,
-      };
-    });
-  }, [trackBenchmark, nextSector, deltas, allDeltas, advice]);
-
-  // Non-target sector corners (for subtle muted circuit reference)
-  const otherCorners = useMemo(() => {
-    return (trackBenchmark?.corners ?? []).filter((c) => c.sector !== nextSector);
-  }, [trackBenchmark, nextSector]);
-
-  // Compute collision-free badge positions (resolves overlapping chicane turns like T18 & T19)
-  const badgePositions = useMemo(() => {
-    if (!bounds || rotatedRacingLine.length < 5 || targetCorners.length === 0) {
-      return [];
-    }
-    const N = rotatedRacingLine.length;
-    const rawBadges = targetCorners.map((tc) => {
-      let apexIdx = Math.round((tc.apex_m / trackLength) * (N - 1));
-      apexIdx = Math.max(0, Math.min(N - 1, apexIdx));
-      const pt = bounds.project(rotatedRacingLine[apexIdx]);
-      return {
-        tc,
-        apexPt: pt,
-        badgePt: { x: pt.x, y: pt.y },
-      };
-    });
-
-    const MIN_DIST = 26; // Badge diameter is 22px; 26px provides a clean visual separation gap
-    for (let iter = 0; iter < 8; iter++) {
-      for (let i = 0; i < rawBadges.length; i++) {
-        for (let j = i + 1; j < rawBadges.length; j++) {
-          const dx = rawBadges[j].badgePt.x - rawBadges[i].badgePt.x;
-          const dy = rawBadges[j].badgePt.y - rawBadges[i].badgePt.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist < MIN_DIST) {
-            const overlap = MIN_DIST - dist;
-            let nx = 0.707;
-            let ny = 0.707;
-            if (dist > 0.05) {
-              nx = dx / dist;
-              ny = dy / dist;
-            }
-            const shift = overlap / 2;
-            rawBadges[i].badgePt.x -= nx * shift;
-            rawBadges[i].badgePt.y -= ny * shift;
-            rawBadges[j].badgePt.x += nx * shift;
-            rawBadges[j].badgePt.y += ny * shift;
-          }
-        }
-      }
-    }
-
-    return rawBadges;
-  }, [bounds, rotatedRacingLine, targetCorners, trackLength]);
-
-  if (!bounds || rotatedRacingLine.length < 5) {
-    return null;
-  }
-
-  const surfacePath =
-    rotatedLeftEdge.length > 0 && rotatedRightEdge.length > 0
-      ? toSvgPath([...rotatedLeftEdge, ...rotatedRightEdge.slice().reverse()], bounds.project, true)
-      : "";
-  const fullRacingLinePath = toSvgPath(rotatedRacingLine, bounds.project, false);
-
-  const handleMouseEnter = (corner: any, e: React.MouseEvent) => {
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const relX = e.clientX - rect.left;
-    const relY = e.clientY - rect.top;
-
-    setHovered({
-      turn: corner.turn,
-      name: corner.name,
-      needsImprovement: Boolean(corner.needsImprovement),
-      timeLoss: Number(corner.timeLoss || 0),
-      delta: corner.delta,
-      x: Math.min(Math.max(relX, 120), rect.width - 120),
-      y: Math.max(relY - 14, 12),
-    });
-  };
-
-  const handleMouseLeave = () => {
-    setHovered(null);
-  };
-
-  return (
-    <div className="coach-minimap-card" ref={containerRef}>
-      <div className="coach-minimap-header">
-        <div className="coach-minimap-title">
-          <span className="minimap-tag">CIRCUIT MAP</span>
-          <span>SECTOR {nextSector} CORNER PACE ANALYSIS</span>
-        </div>
-        <div className="coach-minimap-legend">
-          <span className="legend-item"><i className="dot-red" /> Improvement Needed</span>
-          <span className="legend-item"><i className="dot-green" /> On Pace</span>
-          <span className="legend-item"><i className="dot-muted" /> Full Circuit</span>
-        </div>
-      </div>
-
-      <div className="coach-minimap-svg-wrap">
-        <svg
-          viewBox={`0 0 ${bounds.width} ${bounds.height}`}
-          className="coach-minimap-svg"
-          preserveAspectRatio="xMidYMid meet"
-        >
-          {/* Faint track ribbon */}
-          {surfacePath && (
-            <path
-              d={surfacePath}
-              fill="rgba(255, 255, 255, 0.03)"
-              stroke="rgba(255, 255, 255, 0.07)"
-              strokeWidth={1}
-            />
-          )}
-
-          {/* Full circuit racing line (muted) */}
-          <path
-            d={fullRacingLinePath}
-            fill="none"
-            stroke="rgba(148, 163, 184, 0.28)"
-            strokeWidth={2.4}
-            strokeDasharray="3 3"
-          />
-
-          {/* Subtle dots for other turns across the circuit */}
-          {otherCorners.map((oc) => {
-            const N = rotatedRacingLine.length;
-            let idx = Math.round((oc.apex_m / trackLength) * (N - 1));
-            idx = Math.max(0, Math.min(N - 1, idx));
-            const pt = bounds.project(rotatedRacingLine[idx]);
-            return (
-              <g key={`other-turn-${oc.turn}`} className="other-turn-mark" opacity={0.35}>
-                <circle cx={pt.x} cy={pt.y} r={2.5} fill="rgba(148, 163, 184, 0.8)" />
-              </g>
-            );
-          })}
-
-          {/* Highlighted corner paths for the NEXT sector ONLY */}
-          {targetCorners.map((tc) => {
-            const N = rotatedRacingLine.length;
-            let sIdx = Math.floor((tc.start_m / trackLength) * (N - 1));
-            let eIdx = Math.ceil((tc.end_m / trackLength) * (N - 1));
-            sIdx = Math.max(0, Math.min(N - 1, sIdx));
-            eIdx = Math.max(0, Math.min(N - 1, eIdx));
-            if (Math.abs(eIdx - sIdx) < 4) {
-              sIdx = Math.max(0, sIdx - 2);
-              eIdx = Math.min(N - 1, eIdx + 2);
-            }
-            const slice = sIdx <= eIdx
-              ? rotatedRacingLine.slice(sIdx, eIdx + 1)
-              : [...rotatedRacingLine.slice(sIdx), ...rotatedRacingLine.slice(0, eIdx + 1)];
-            const cornerD = toSvgPath(slice, bounds.project, false);
-
-            const color = tc.needsImprovement ? "#ef4444" : "#10b981";
-
-            return (
-              <path
-                key={`highlight-path-${tc.turn}`}
-                d={cornerD}
-                fill="none"
-                stroke={color}
-                strokeWidth={5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="coach-corner-segment"
-                onMouseEnter={(e) => handleMouseEnter(tc, e)}
-                onMouseLeave={handleMouseLeave}
-              />
-            );
-          })}
-
-          {/* Apex markers and Turn badges with de-overlapping leader lines */}
-          {badgePositions.map(({ tc, apexPt, badgePt }) => {
-            const color = tc.needsImprovement ? "#ef4444" : "#10b981";
-            const isDisplaced = Math.hypot(badgePt.x - apexPt.x, badgePt.y - apexPt.y) > 3.5;
-
-            return (
-              <g key={`badge-${tc.turn}`}>
-                {/* Dotted leader line and apex dot when displaced in close chicanes */}
-                {isDisplaced && (
-                  <g className="coach-leader-line">
-                    <circle cx={apexPt.x} cy={apexPt.y} r={2.5} fill={color} />
-                    <line
-                      x1={apexPt.x}
-                      y1={apexPt.y}
-                      x2={badgePt.x}
-                      y2={badgePt.y}
-                      stroke={color}
-                      strokeWidth={1.4}
-                      strokeDasharray="2 2"
-                      opacity={0.8}
-                    />
-                  </g>
-                )}
-
-                {/* Visible turn pin badge at de-overlapped coordinate */}
-                <g
-                  className="coach-turn-pin"
-                  transform={`translate(${badgePt.x}, ${badgePt.y})`}
-                  onMouseEnter={(e) => handleMouseEnter(tc, e)}
-                  onMouseLeave={handleMouseLeave}
-                  style={{ cursor: "pointer" }}
-                >
-                  <circle r={11} fill="#0d131d" stroke={color} strokeWidth={2.4} />
-                  <text
-                    y={3.5}
-                    textAnchor="middle"
-                    fill="#ffffff"
-                    fontSize="9.5"
-                    fontWeight="800"
-                    fontFamily="'DM Mono', monospace, sans-serif"
-                    pointerEvents="none"
-                  >
-                    {tc.turn}
-                  </text>
-                </g>
-              </g>
-            );
-          })}
-        </svg>
-
-        {/* Hover Tooltip */}
-        {hovered && (
-          <div
-            className="coach-minimap-tooltip"
-            style={{
-              left: `${hovered.x}px`,
-              top: `${hovered.y}px`,
-              transform: "translate(-50%, -100%)",
-            }}
-          >
-            <div className="tooltip-top-row">
-              <span className="tooltip-turn-title">Turn {hovered.turn}</span>
-              {hovered.name ? <span className="tooltip-turn-name">{hovered.name}</span> : null}
-              <span className={`tooltip-badge ${hovered.needsImprovement ? "badge-red" : "badge-green"}`}>
-                {hovered.needsImprovement ? `+${hovered.timeLoss.toFixed(2)}s DEFICIT` : "ON PACE"}
-              </span>
-            </div>
-            {hovered.delta?.diagnosis && (
-              <div className="tooltip-diagnosis-text">{hovered.delta.diagnosis}</div>
-            )}
-            {hovered.delta && (
-              <div className="tooltip-metrics-row">
-                <span>Ghost Target: <b>{hovered.delta.ideal_apex_speed_kph} km/h (G{hovered.delta.ideal_apex_gear})</b></span>
-                <span>Your Apex: <b>{hovered.delta.player_min_speed_kph} km/h</b></span>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function App() {
   const { snapshot, state, lastMessageAt } = useTelemetry();
   const [plot, setPlot] = useState<PlotPoint[]>([]);
   const [mapHistory, setMapHistory] = useState<Position[]>([]);
-  const [trackCatalog, setTrackCatalog] = useState<Record<number, TrackOutline>>({});
   const [trackOutline, setTrackOutline] = useState<TrackOutline | null>(null);
   const [lightTheme, setLightTheme] = useState(false);
   const [selectedLap, setSelectedLap] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<"live" | "laps">("live");
   const [coachOpen, setCoachOpen] = useState(false);
   const [coachLoading, setCoachLoading] = useState(false);
+  const [coachError, setCoachError] = useState("");
+  const coachRequest = useRef(0);
   const [coachData, setCoachData] = useState<CoachAnalysisResponse | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [keySaveMsg, setKeySaveMsg] = useState("");
@@ -1037,9 +601,20 @@ function App() {
   const player = shown?.player;
   const session = shown?.session;
 
+  useEffect(() => {
+    coachRequest.current += 1;
+    setCoachData(null);
+    setCoachError("");
+    setCoachLoading(false);
+    setCoachOpen(false);
+  }, [snapshot?.liveStreamId, snapshot?.recorder?.epoch, player?.lapNum, player?.sector]);
+
   const runCoachAnalysis = async () => {
+    const request = ++coachRequest.current;
     setCoachLoading(true);
     setCoachOpen(true);
+    setCoachError("");
+    setCoachData(null);
     try {
       const res = await fetch("/api/coach/analyse", {
         method: "POST",
@@ -1050,40 +625,16 @@ function App() {
         }),
       });
       const data = await res.json();
+      if (request !== coachRequest.current) return;
+      if (!res.ok) throw new Error(data.detail || "Analysis failed. Try again.");
       setCoachData(data);
       if (typeof data.hasApiKey === "boolean") setHasApiKey(data.hasApiKey);
     } catch (e) {
-      console.error(e);
+      if (request === coachRequest.current) setCoachError(e instanceof Error ? e.message : "Analysis failed");
     } finally {
-      setCoachLoading(false);
+      if (request === coachRequest.current) setCoachLoading(false);
     }
   };
-    const displayDeltas = useMemo(() => {
-    if (coachData?.deltas && coachData.deltas.length > 0) {
-      return coachData.deltas;
-    }
-    const sec = coachData?.nextSector ?? 1;
-    const corners = (coachData?.track?.corners ?? []).filter((c) => c.sector === sec);
-    return corners.map((c): CornerDeltaUI => ({
-      turn: String(c.turn),
-      name: c.name || `Turn ${c.turn}`,
-      apex_m: c.apex_m,
-      sector: c.sector,
-      ideal_brake_m: c.ideal_brake_m ?? Math.max(0, c.apex_m - 80),
-      ideal_apex_speed_kph: c.ideal_apex_speed_kph ?? 120,
-      ideal_apex_gear: c.ideal_apex_gear ?? 3,
-      player_min_speed_kph: 0,
-      apex_speed_delta_kph: 0,
-      time_loss_s: 0,
-      diagnosis: c.notes || "Ideal Ghost Target",
-      notes: c.notes || "",
-      player_brake_on_m: null,
-      player_throttle_on_m: null,
-      brake_delta_m: null,
-      throttle_delta_m: null,
-    }));
-  }, [coachData]);
-
   const cars = Array.isArray(shown?.cars) ? shown.cars : [];
   const lapHistory = Array.isArray(snapshot?.laps) ? snapshot.laps : [];
 
@@ -1103,69 +654,43 @@ function App() {
   }, []);
 
   useEffect(() => {
-    let active = true;
-
-    const preloadTracks = async () => {
-      const nextCatalog: Record<number, TrackOutline> = {};
-      const entries = Object.entries(TRACK_FILES) as [string, string][];
-
-      for (const [trackIdString, fileName] of entries) {
-        try {
-          const trackId = Number(trackIdString);
-          // Try database API endpoint first, fallback to static JSON asset if offline/unseeded
-          let data: {
-            left_edge?: [number, number][];
-            right_edge?: [number, number][];
-            lines?: { formula1?: { racing_line?: [number, number][] } };
-            orientation?: number;
-          } | null = null;
-
-          const dbRes = await fetch(`/api/circuits/${trackId}`);
-          if (dbRes.ok) {
-            data = await dbRes.json();
-          } else {
-            const staticRes = await fetch(`/track_data/${fileName}`);
-            if (staticRes.ok) {
-              data = await staticRes.json();
-            }
-          }
-
-          if (!data) continue;
-
-          const leftEdge = (data.left_edge ?? []).map(([x, z]) => ({ x, z }));
-          const rightEdge = (data.right_edge ?? []).map(([x, z]) => ({ x, z }));
-          const racingLine = (data.lines?.formula1?.racing_line ?? []).map(([x, z]) => ({ x, z }));
-
-          nextCatalog[trackId] = {
-            leftEdge,
-            rightEdge,
-            racingLine,
-            orientation: Number(data.orientation ?? 0),
-          };
-        } catch {
-          // Ignore any track file that fails to load; the session will keep showing the live trace fallback.
-        }
-      }
-
-      if (active) {
-        setTrackCatalog(nextCatalog);
-      }
-    };
-
-    preloadTracks();
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
     const trackId = session?.trackId;
-    if (trackId === undefined || trackId === null || trackId < 0) {
-      setTrackOutline(null);
-      return;
-    }
-    setTrackOutline(trackCatalog[trackId] ?? null);
-  }, [session?.trackId, trackCatalog]);
+    const fileName = trackId == null ? undefined : TRACK_FILES[trackId];
+    setTrackOutline(null);
+    if (!fileName) return;
+
+    const controller = new AbortController();
+    fetch(`/track_data/${fileName}`, { signal: controller.signal })
+      .then((response) => (response.ok ? response.json() : Promise.reject()))
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        setTrackOutline({
+          leftEdge: (data.left_edge ?? []).map(([x, z]: number[]) => ({ x, z })),
+          rightEdge: (data.right_edge ?? []).map(([x, z]: number[]) => ({ x, z })),
+          racingLine: (data.lines?.formula1?.racing_line ?? []).map(([x, z]: number[]) => ({ x, z })),
+          orientation: Number(data.orientation ?? 0),
+          sfLine: data.sf_line,
+        });
+      })
+      .catch(() => {
+        // Fallback to database circuit API if available
+        fetch(`/api/circuits/${trackId}`, { signal: controller.signal })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (!data || controller.signal.aborted) return;
+            setTrackOutline({
+              leftEdge: (data.left_edge ?? []).map(([x, z]: number[]) => ({ x, z })),
+              rightEdge: (data.right_edge ?? []).map(([x, z]: number[]) => ({ x, z })),
+              racingLine: (data.lines?.formula1?.racing_line ?? []).map(([x, z]: number[]) => ({ x, z })),
+              orientation: Number(data.orientation ?? 0),
+              sfLine: data.sf_line,
+            });
+          })
+          .catch(() => {});
+      });
+
+    return () => controller.abort();
+  }, [session?.trackId]);
 
   useEffect(() => {
     if (frozen) { traceGap.current = true; return; }
@@ -1174,7 +699,9 @@ function App() {
     if (marker === lastSample.current) return;
     lastSample.current = marker;
     // WebSocket refreshes and repeated paused frames are not driving samples.
-    if (lastGameTime.current !== null && sessionTime <= lastGameTime.current) return;
+    if (lastGameTime.current !== null && sessionTime < lastGameTime.current) {
+      traceGap.current = true;
+    }
     lastGameTime.current = sessionTime;
 
     if (isNumber(player.speed) && isNumber(player.throttle) && isNumber(player.brake)) {
@@ -1191,7 +718,8 @@ function App() {
     }
 
     const playerCar = cars.find((car) => car.isPlayer)
-      ?? (isNumber(player.position) ? cars.find((car) => car.position === player.position) : undefined);
+      ?? (isNumber(snapshot?.playerCarIndex) ? cars.find((car) => car.index === snapshot?.playerCarIndex) : undefined)
+      ?? (isNumber(player?.position) ? cars.find((car) => car.position === player?.position) : undefined);
     if (playerCar && isNumber(playerCar.worldX) && isNumber(playerCar.worldZ)) {
       setMapHistory((current) => [
         ...current.slice(-(MAP_HISTORY_LIMIT - 1)),
@@ -1219,7 +747,7 @@ function App() {
   }, [lapHistory, latestLap, selectedLap]);
 
   return (
-    <main className={lightTheme ? "dashboard theme-light" : "dashboard"}>
+    <main className={`dashboard ${lightTheme ? "theme-light" : ""} ${activeTab === "live" ? "race-view" : "compare-view"}`}>
       <header className="topbar">
         <a className="brand" href="#" aria-label="KREM dashboard home">
           <span className="brand-mark"><i /><i /><i /></span>
@@ -1253,7 +781,7 @@ function App() {
         <div className="status-event"><span className="event-pulse" />{eventText || "READY FOR RACE CONTROL EVENTS"}</div>
       </div>
 
-      {!connected && (
+      {!connected && activeTab === "live" && (
         <div className="connection-banner" role="status">
           <span className="banner-icon">!</span>
           <div>
@@ -1275,34 +803,21 @@ function App() {
               <span>{displayNumber(player?.speed)} <small>KM/H</small></span>
             </div>
             <TrackMap cars={cars} history={mapHistory} player={player} trackOutline={trackOutline} />
-            <div className="panel-foot"><span><i className="legend-live" />PLAYER POSITION</span><span>WORLD X / Z</span></div>
-          </article>
-
-          <article className="panel panel-timing">
-            <PanelHeading eyebrow="02 / LAP ANALYSIS" title="Sectors & timing" trailing={isNumber(player?.lapNum) ? <span className="lap-badge">LAP {player.lapNum}</span> : undefined} />
+            <div className="race-timing">
             <div className="timing-main">
               <div className="timer-block"><span className="eyebrow">CURRENT LAP</span><strong>{formatTime(player?.lapTime)}</strong><span className="timer-status">{player?.invalid ? "INVALID LAP" : currentSector ? `IN SECTOR ${currentSector}` : "WAITING FOR LAP"}</span></div>
               <div className="position-large"><span>POSITION</span><strong>{isNumber(player?.position) ? `P${player.position}` : "—"}</strong></div>
             </div>
             <div className="sector-track" aria-label="Three sector timing progress">
-              {[1, 2, 3].map((sector) => (
-                <div key={sector} className={`sector-segment ${currentSector === sector ? "sector-current" : currentSector && currentSector > sector ? "sector-complete" : ""}`}>
-                  <span>S{sector}</span>
-                  <strong>{formatTime(sector === 1 ? player?.sector1TimeMs : sector === 2 ? player?.sector2TimeMs : player?.sector3TimeMs)}</strong>
-                  {sector < 3 && <i className="sector-divider" />}
+              {(snapshot?.sectorTiming?.length === 3 ? snapshot.sectorTiming : [1, 2, 3].map(sector => ({ sector, state: "upcoming", timeMs: null, grade: "neutral" }))).map((timing) => (
+                <div key={timing.sector} className={`sector-segment grade-${timing.grade} ${timing.state === "current" ? "sector-current" : ""}`}>
+                  <span>S{timing.sector} <small>{timing.state === "current" ? "RUNNING" : timing.state === "complete" ? "COMPLETE" : "NEXT"}</small></span>
+                  <strong>{timing.timeMs === 0 ? "0.000" : formatTime(timing.timeMs)}</strong>
                 </div>
               ))}
             </div>
-            <div className="timing-details">
-              <div><span>LAP DISTANCE</span><strong>{distance === null ? "—" : `${Math.max(0, distance).toFixed(0)} m`}</strong></div>
-              <div><span>RACE LAPS</span><strong>{isNumber(session?.totalLaps) ? `${isNumber(player?.lapNum) ? player.lapNum : "—"} / ${session.totalLaps}` : "—"}</strong></div>
-              <div><span>LAP INVALID</span><strong className={player?.invalid == null ? "" : player.invalid ? "text-red" : "text-green"}>{player?.invalid == null ? "—" : player.invalid ? "YES" : "NO"}</strong></div>
-            </div>
-            <div className="timing-session">
-              <div><span>TRACK</span><strong>{session?.trackName || "—"}</strong></div>
-              <div><span>WEATHER</span><strong>{session?.weather ?? "—"}</strong></div>
-              <div><span>TRACK TEMP</span><strong>{displayNumber(session?.trackTemp, 0, "°")}</strong></div>
-              <div><span>AIR TEMP</span><strong>{displayNumber(session?.airTemp, 0, "°")}</strong></div>
+            <div className="timing-legend"><span className="grade-purple">● Session best</span><span className="grade-green">● Personal best</span><span className="grade-yellow">● Slower</span><span>Grey: no valid reference</span></div>
+            <div className="race-context">LAP {displayNumber(player?.lapNum)} / {displayNumber(session?.totalLaps)} · TRACK {displayNumber(session?.trackTemp)}°C · AIR {displayNumber(session?.airTemp)}°C</div>
             </div>
           </article>
 
@@ -1324,11 +839,6 @@ function App() {
             <div className="panel-foot"><span>DISTANCE {distance === null ? "—" : `${distance.toFixed(0)} M`}</span><span>LIVE TRACE · NO REFERENCE LAP</span></div>
           </article>
 
-          <article className="panel panel-car-health">
-            <PanelHeading eyebrow="03 / CHASSIS" title="Car health" trailing={<span className="panel-chip">TYRES · WINGS</span>} />
-            <CarStatusPanel player={player} freshness={snapshot?.freshness} online={socketConnected} retained={frozen} paused={paused} />
-          </article>
-
           <article className="panel panel-values">
             <PanelHeading eyebrow="04 / CAR TELEMETRY" title="Player values" trailing={<span className="gear-readout">{displayNumber(player?.gear)}</span>} />
             <div className="values-grid">
@@ -1337,33 +847,32 @@ function App() {
               <Stat label="THROTTLE" value={percent(player?.throttle)} />
               <Stat label="BRAKE" value={percent(player?.brake)} />
               <Stat label="STEERING" value={displayNumber(player?.steer, 2)} />
-              <Stat label="SUGGESTED GEAR" value={displayNumber(player?.suggestedGear)} />
+              <Stat label="SUGGESTED GEAR" value={isNumber(player?.suggestedGear) && player.suggestedGear > 0 ? String(player.suggestedGear) : "—"} />
               <Stat label="LATERAL G" value={displayNumber(player?.gLat, 2)} />
               <Stat label="LONGITUDINAL G" value={displayNumber(player?.gLong, 2)} />
               <Stat label="DRS" value={player?.drs == null ? "—" : player.drs ? "OPEN" : "CLOSED"} />
               <Stat label="DRS AVAILABLE" value={player?.drsAllowed == null ? "—" : player.drsAllowed ? "YES" : "NO"} />
-              <Stat label="ERS STORE" value={displayNumber(player?.ersStore, 2)} unit="MJ" />
+              <Stat label="ERS STORE" value={displayNumber(isNumber(player?.ersStore) ? player.ersStore / 1_000_000 : null, 2)} unit="MJ" />
               <Stat label="ERS MODE" value={displayNumber(player?.ersMode)} />
               <Stat label="FUEL" value={displayNumber(player?.fuel, 1)} unit="KG" />
               <Stat label="FUEL LAPS" value={displayNumber(player?.fuelLaps, 1)} />
-              <Stat label="TYRE COMPOUND" value={player?.tyreCompound == null ? "—" : String(player.tyreCompound)} />
+              <Stat label="TYRE COMPOUND" value={player?.tyres?.visualCompoundName ?? (player?.tyreCompound == null ? "—" : String(player.tyreCompound))} />
               <Stat label="TYRE AGE" value={displayNumber(player?.tyreAge)} unit="LAPS" />
             </div>
             <div className="values-footer">
               <div className="driving-state"><span className="state-dot" /><span>{isNumber(player?.brake) && isNumber(player?.throttle) ? (player.brake ?? 0) >= 0.02 ? "BRAKING" : (player.throttle ?? 0) >= 0.98 ? "FULL THROTTLE" : (player.throttle ?? 0) > 0.02 ? "ACCELERATING" : "COASTING" : "AWAITING TELEMETRY"}</span></div>
-              <div className="coach-action">
-                <button
-                  className="coach-button active-coach"
-                  onClick={runCoachAnalysis}
-                  disabled={coachLoading}
-                  title="Run live AI telemetry analysis against the Ideal Ghost benchmark"
-                >
-                  <span className="coach-spark">✦</span> {coachLoading ? "ANALYSING TELEMETRY..." : "GEMINI AI COACH"}
-                  <span className="coach-tag">IDEAL GHOST</span>
-                </button>
-                <span className="coach-note">{hasApiKey ? "● GEMINI 3.5 CONNECTED" : "○ TELEMETRY MODE · SET GEMINI KEY FOR LIVE RADIO"}</span>
-              </div>
+
             </div>
+            <div className="health-heading"><h3>Car health</h3><span>DAMAGE OVERVIEW</span></div>
+            <CarStatusPanel player={player} freshness={snapshot?.freshness} online={socketConnected} retained={frozen} paused={paused} />
+            <section className="race-coach">
+              <div className="coach-toolbar"><div><span className="eyebrow">PREVIOUS LAP → UPCOMING SECTOR</span><h3>Corner briefing · S{currentSector ? currentSector % 3 + 1 : "—"}</h3></div>
+                <button className="coach-button" onClick={runCoachAnalysis} disabled={coachLoading || !currentSector}>{coachLoading ? "Analysing…" : "✦ Analyse next sector"}</button>
+              </div>
+              <p className="coach-empty">Brake and throttle timing from your previous lap, one card per turn.</p>
+              {!hasApiKey && <details className="coach-key-settings"><summary>Connect Gemini for AI coaching</summary><div><input type="password" aria-label="Gemini API key" placeholder="Gemini API key" value={apiKeyInput} onChange={e => setApiKeyInput(e.target.value)} /><button onClick={saveApiKey}>Save key</button><span>{keySaveMsg}</span></div></details>}
+            </section>
+
           </article>
         </section>
       ) : (
@@ -1375,127 +884,13 @@ function App() {
         <span>PACKETS {displayNumber(stats?.packetsReceived)} <i>·</i> ACCEPTED {displayNumber(stats?.packetsAccepted)} <i>·</i> REJECTED {displayNumber(stats?.packetsRejected)}</span>
         <span>{lastMessageAt ? `UPDATED ${new Date(lastMessageAt).toLocaleTimeString()}` : "WAITING FOR DATA"}</span>
       </footer>
+      {coachOpen && <div className="coach-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCoachOpen(false); }} role="presentation">
+        <section className="coach-modal" role="dialog" aria-modal="true" aria-label="AI race engineer analysis">
+          <header className="coach-modal-header"><div><span>✦ AI RACE ENGINEER</span><h2>Corner briefing · {session?.trackName || "Current circuit"}</h2><p>SECTOR {coachData?.nextSector ?? (currentSector ? currentSector % 3 + 1 : "—")} · BASED ON LAP {coachData?.lapNum ?? (isNumber(player?.lapNum) ? player.lapNum - 1 : "—")}</p></div><button onClick={() => setCoachOpen(false)} aria-label="Close analysis">×</button></header>
+          <div className="coach-modal-body"><CoachCards data={coachData} loading={coachLoading} error={coachError} /></div>
+        </section>
+      </div>}
 
-      {coachOpen && (
-        <div className="coach-modal-backdrop" onClick={() => setCoachOpen(false)}>
-          <div className="coach-modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="coach-modal-header">
-              <div>
-                <span className="coach-eyebrow">✦ AI RACE ENGINEER</span>
-                <h2>Ideal Ghost Telemetry Coach · {coachData?.track?.track_name || session?.trackName || "Circuit"}</h2>
-                {coachData?.nextSector && (
-                  <div className="coach-sector-pill">
-                    FOCUS: <strong>SECTOR {coachData.nextSector}</strong> (BASED ON LAP {coachData.lapNum ?? "PREVIOUS"})
-                  </div>
-                )}
-              </div>
-              <button className="coach-close-btn" onClick={() => setCoachOpen(false)}>✕</button>
-            </div>
-
-            <div className="coach-modal-body">
-              {!hasApiKey && (
-                <div className="coach-key-banner">
-                  <div className="coach-key-desc">
-                    <strong>Enter Google Gemini API Key:</strong>
-                    <span>Enables live race engineer advice powered by Gemini 3.5 Flash.</span>
-                  </div>
-                  <div className="coach-key-inputs">
-                    <input
-                      type="password"
-                      placeholder="AIzaSy..."
-                      value={apiKeyInput}
-                      onChange={(e) => setApiKeyInput(e.target.value)}
-                    />
-                    <button onClick={saveApiKey}>Connect API Key</button>
-                  </div>
-                  {keySaveMsg && <div className="key-msg">{keySaveMsg}</div>}
-                </div>
-              )}
-
-              {coachLoading ? (
-                <div className="coach-spinner-box">
-                  <span className="coach-spinner" />
-                  <p>Comparing your telemetry against the Ideal Ghost benchmark...</p>
-                </div>
-              ) : coachData ? (
-                <div className="coach-results">
-                  <div className="coach-report-box">
-                    <div className="briefing-header">
-                      <h3>RACE ENGINEER RADIO · SECTOR {coachData.nextSector ?? 1} TARGET</h3>
-                      <span className="last-lap-tag">LAST COMPLETED LAP {coachData.lapNum ? `(#${coachData.lapNum})` : ""}</span>
-                    </div>
-                    <div className="coach-markdown-text">
-                      {coachData.advice.split("\n").map((line, idx) => {
-                        const trimmed = line.trim();
-                        if (!trimmed) return <div key={idx} className="briefing-spacer" />;
-                        if (trimmed.startsWith("###") || trimmed.startsWith("**SECTOR") || trimmed.startsWith("**NEXT") || trimmed.startsWith("**CORNER") || trimmed.startsWith("**FIXES")) {
-                          return <h4 key={idx} className="briefing-subhead">{trimmed.replace(/^[#*]+/, "").replace(/[*:]+$/, "")}</h4>;
-                        }
-                        if (trimmed.startsWith("-") || trimmed.startsWith("*") || /^[0-9]\./.test(trimmed)) {
-                          return (
-                            <div key={idx} className="briefing-bullet">
-                              <span className="bullet-dot">▸</span>
-                              <span>{trimmed.replace(/^[-*0-9.]+\s*/, "")}</span>
-                            </div>
-                          );
-                        }
-                        return <p key={idx}>{trimmed}</p>;
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Tile format comparing Ghost Benchmark vs Player - always before Circuit Map */}
-                  {displayDeltas.length > 0 && (
-                    <div className="coach-deltas-section">
-                      <h3>SECTOR {coachData.nextSector ?? 1} CORNER DELTAS VS IDEAL GHOST</h3>
-                      <div className="deltas-grid">
-                        {displayDeltas.slice(0, 8).map((delta) => {
-                          const isLoss = delta.time_loss_s > 0.05;
-                          return (
-                            <div key={delta.turn} className={`delta-card ${isLoss ? "loss-high" : ""}`}>
-                              <div className="delta-card-top">
-                                <span className="delta-turn">T{delta.turn} {delta.name}</span>
-                                <span className={`delta-loss-badge ${isLoss ? "badge-red" : "badge-green"}`}>
-                                  {delta.time_loss_s > 0 ? `+${delta.time_loss_s.toFixed(2)}s` : "ON PACE"}
-                                </span>
-                              </div>
-                              <div className="delta-diag">{delta.diagnosis || "Clean execution on ideal line"}</div>
-                              <div className="delta-stats">
-                                <div><span>Ghost Apex:</span> <b>{delta.ideal_apex_speed_kph} km/h (G{delta.ideal_apex_gear})</b></div>
-                                {delta.player_min_speed_kph > 0 ? (
-                                  <div><span>Your Apex:</span> <b>{delta.player_min_speed_kph} km/h</b></div>
-                                ) : null}
-                                {isNumber(delta.brake_delta_m) ? (
-                                  <div><span>Braking:</span> <b>{delta.brake_delta_m! > 0 ? `${Math.round(delta.brake_delta_m!)}m early` : `${Math.abs(Math.round(delta.brake_delta_m!))}m late`}</b></div>
-                                ) : delta.ideal_brake_m > 0 ? (
-                                  <div><span>Ghost Brake:</span> <b>{Math.round(delta.ideal_brake_m)}m before apex</b></div>
-                                ) : null}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Circuit Map at the bottom */}
-                  <CoachMiniMap
-                    trackOutline={trackOutline}
-                    circuit={coachData.circuit}
-                    trackBenchmark={coachData.track}
-                    nextSector={coachData.nextSector ?? 1}
-                    deltas={coachData.deltas}
-                    allDeltas={coachData.allDeltas}
-                    advice={coachData.advice}
-                  />
-                </div>
-              ) : (
-                <p>Click "Run Coach" to evaluate your telemetry.</p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
     </main>
   );

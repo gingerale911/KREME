@@ -15,7 +15,7 @@ def create_lap_comparison_router(
     router = APIRouter()
 
     @router.get("/api/laps/compare")
-    async def compare_stored_laps(
+    def compare_stored_laps(
         reference_id: str = Query(..., min_length=1),
         comparison_id: str = Query(..., min_length=1),
         grid_points: int = Query(201, ge=2, le=2001),

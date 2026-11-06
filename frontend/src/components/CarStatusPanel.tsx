@@ -30,40 +30,29 @@ const WHEELS = [
 ];
 const finite = (v: Reading): v is number => typeof v === "number" && Number.isFinite(v);
 const format = (v: Reading, unit: string, digits = 0) => finite(v) ? `${v.toFixed(digits)}${unit}` : "—";
-const damageColor = (v: Reading) => finite(v) ? `hsl(${120 * (1 - Math.min(100, Math.max(0, v)) / 100)} 78% 58%)` : "#728091";
+// Even small non-zero damage must be visibly different from an intact part.
+const damageColor = (v: Reading, tyre = false) => {
+  if (!finite(v)) return "#728091";
+  const damage = Math.min(100, Math.max(0, v));
 
-function WheelReading({ label, values, telemetryAvailability, damageAvailability }: {
-  label: string;
-  values: { wear: Reading; damage: Reading; surface: Reading; inner: Reading; brake: Reading; pressure: Reading };
-  telemetryAvailability: Availability;
-  damageAvailability: Availability;
-}) {
-  return <div className={`cs-wheel cs-wheel-${label.toLowerCase()}`}>
-    <div className="cs-wheel-heading"><strong>{label}</strong><span className={`cs-mini-status cs-${damageAvailability}`}>{damageAvailability === "fresh" ? "LIVE" : damageAvailability.toUpperCase()}</span></div>
-    <div className="cs-wheel-metrics">
-      <div><span>WEAR</span><b style={{ color: damageColor(values.wear) }}>{format(values.wear, "%")}</b></div>
-      <div><span>DAMAGE</span><b style={{ color: damageColor(values.damage) }}>{format(values.damage, "%")}</b></div>
-      <div><span>SURFACE</span><b>{format(values.surface, "°C")}</b></div>
-      <div><span>INNER</span><b>{format(values.inner, "°C")}</b></div>
-      <div><span>PRESSURE</span><b>{format(values.pressure, " psi", 1)}</b></div>
-      <div><span>BRAKE</span><b>{format(values.brake, "°C")}</b></div>
-    </div>
-    {telemetryAvailability !== "fresh" && <small className="cs-wheel-stale">TELEMETRY {telemetryAvailability.toUpperCase()}</small>}
-  </div>;
-}
+  const hue = damage >= 100 ? 0 : tyre ? (damage < 50 ? 120 : damage < 75 ? 55 : 28) : (damage < 2 ? 120 : damage < 50 ? 55 : 28);
+  return `hsl(${hue} 78% 58%)`;
+};
 
 function CarDiagram({ damage, wheelValues }: { damage: Partial<Record<DamageKey, Reading>>; wheelValues: Reading[] }) {
   return <svg className="cs-car" viewBox="0 0 300 460" role="img" aria-label="Top-down car, front at top; independently coloured damage components">
     <g stroke="#647181" strokeWidth="2" fill="none">
       <path d="M72 133 L142 166 M228 133 L158 166 M72 155 L138 183 M228 155 L162 183 M72 350 L137 324 M228 350 L163 324 M72 365 L133 352 M228 365 L167 352" />
     </g>
-    {PARTS.map(part => <path key={part.key} d={part.path} data-part={part.key} fill={damageColor(damage[part.key])} fillOpacity="0.13" stroke={damageColor(damage[part.key])} strokeWidth="2.4" strokeLinejoin="round"><title>{`${part.label}: ${format(damage[part.key], "% damage")}`}</title></path>)}
+    {PARTS.map(part => <path key={part.key} d={part.path} data-part={part.key} fill={damageColor(damage[part.key])} fillOpacity="0.65" stroke={damageColor(damage[part.key])} strokeWidth="3" strokeLinejoin="round"><title>{`${part.label}: ${format(damage[part.key], "% damage")}`}</title></path>)}
     <g fill="#18232d" stroke="#8192a4" strokeWidth="2">
-      <path d="M143 45 Q150 31 157 45 L163 186 L177 222 L171 280 L160 319 L157 377 L143 377 L140 319 L129 280 L123 222 L137 186 Z" />
-      <ellipse cx="150" cy="222" rx="16" ry="29" fill="#0b1119" />
-      <path d="M130 217 Q150 188 170 217 M150 198 L150 230 M140 286 L150 314 L160 286" fill="none" />
+      <path d="M147 42 Q150 34 153 42 L158 103 L169 146 L167 183 L177 207 L172 239 L163 255 L162 324 L157 381 L143 381 L138 324 L137 255 L128 239 L123 207 L133 183 L131 146 L142 103 Z" />
+      <path d="M139 127 L161 127 L170 161 L163 201 L137 201 L130 161 Z" fill="#253440" />
+      <path d="M138 210 Q150 188 162 210 L163 248 Q150 262 137 248 Z" fill="#090e15" />
+      <ellipse cx="150" cy="219" rx="10" ry="17" fill="#1a2630" stroke="#9dacba" />
+      <path d="M150 42 L150 183 M132 161 L168 161 M135 272 L165 272 M138 290 L162 290 M143 320 L157 320" stroke="#9dacba" strokeWidth="1.3" fill="none" />
     </g>
-    {WHEELS.map((wheel, i) => <rect key={wheel.label} data-tyre={wheel.label} x={wheel.x} y={wheel.y} width="36" height="60" rx="7" fill={damageColor(wheelValues[i])} fillOpacity="0.14" stroke={damageColor(wheelValues[i])} strokeWidth="2.5"><title>{`${wheel.label} tyre`}</title></rect>)}
+    {WHEELS.map((wheel, i) => <rect key={wheel.label} data-tyre={wheel.label} x={wheel.x} y={wheel.y} width="36" height="60" rx="7" fill={damageColor(wheelValues[i], true)} fillOpacity="0.8" stroke={damageColor(wheelValues[i], true)} strokeWidth="2.5"><title>{`${wheel.label}: ${format(wheelValues[i], "% damage")}`}</title></rect>)}
     <g stroke="#647181" strokeWidth="1.5" fill="none"><path d="M117 408 L117 429 M137 408 L137 429 M163 408 L163 429 M183 408 L183 429" /></g>
   </svg>;
 }
@@ -89,16 +78,12 @@ export default function CarStatusPanel({ player, freshness, online, retained = f
     <div className="cs-heading"><span>NUM {player?.driverNumber ?? "—"}</span><span className={`cs-availability cs-${telemetryState === "fresh" && damageState === "fresh" ? "fresh" : telemetryState === "offline" && damageState === "offline" ? "offline" : "stale"}`}>{paused ? "PAUSED" : !online ? "DISCONNECTED · RETAINED" : retained ? "STALE · RETAINED" : telemetryState === "fresh" && damageState === "fresh" ? "LIVE" : "PARTIAL / STALE"}</span></div>
     <div className="cs-stage cs-stage-all">
       <span className="cs-front">↑ FRONT</span>
-      <CarDiagram damage={damage} wheelValues={wheelValues.map(w => w.wear)} />
-      {WHEELS.map((wheel, i) => <WheelReading key={wheel.label} label={wheel.label} values={wheelValues[i]} telemetryAvailability={telemetryState} damageAvailability={damageState} />)}
+      <CarDiagram damage={damage} wheelValues={wheelValues.map(w => w.damage)} />
+      {WHEELS.map((wheel, i) => <div key={wheel.label} className={`cs-tyre-gauge cs-gauge-${wheel.label.toLowerCase()}`} style={{ borderColor: damageColor(wheelValues[i].wear, true) }} title={`${wheel.label}: ${format(wheelValues[i].wear, "% wear")} · ${format(wheelValues[i].damage, "% physical damage")}`}><small>{wheel.label}</small><strong>{format(finite(wheelValues[i].wear) ? 100 - Math.min(100, Math.max(0, wheelValues[i].wear!)) : null, "%")}</strong><small>HEALTH</small></div>)}
     </div>
     <div className="cs-sources" role="status"><span>TELEMETRY <b className={`cs-${telemetryState}`}>{telemetryState.toUpperCase()}</b></span><span>DAMAGE <b className={`cs-${damageState}`}>{damageState.toUpperCase()}</b></span></div>
     <div className="cs-caption">ALL TYRE METRICS · Wear and damage in % · temperatures in °C · pressure in psi</div>
-    <div className="cs-legend"><span><i style={{ background: "#73e747" }} />0%</span><span><i style={{ background: "#e7cb47" }} />50%</span><span><i style={{ background: "#e74747" }} />100%</span><span><i style={{ background: "#728091" }} />No current data</span></div>
-    <div className="cs-note">Tyre diagram colour represents wear. Individual readings remain visible in each tyre card.</div>
-    <section className="cs-chassis-section">
-      <div className="cs-chassis-heading"><strong>CHASSIS DAMAGE</strong><span>BODY COMPONENTS</span></div>
-      <div className="cs-damage-list">{PARTS.map(part => <div key={part.key}><span>{part.label}</span><strong style={{ color: damageColor(damage[part.key]) }}>{format(damage[part.key], "%")}</strong></div>)}</div>
-    </section>
+    <div className="cs-legend">Wings: 0–1 green · 2–49 yellow · 50–99 orange · 100 red<br />Tyres: 0–49 green · 50–74 yellow · 75–99 orange · 100 red</div>
+    <div className="cs-note">Circles: remaining tyre health (100 − wear). Car: physical damage. Grey: unavailable.</div>
   </div>;
 }
