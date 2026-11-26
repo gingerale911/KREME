@@ -97,11 +97,13 @@ def build_coach_prompt(
         {
             "turn": c.turn,
             "name": c.name,
-            "end_m": round(c.end_m, 1),
-            "ideal_exit_speed_kph": round(c.ideal_apex_speed_kph, 1),
-            "player_exit_speed_kph": round(c.player_exit_speed_kph, 1) if c.player_exit_speed_kph is not None else None,
-            "exit_speed_delta_kph": round(c.exit_speed_delta_kph, 1),
-            "speed_buffer_kph": c.speed_buffer_kph,
+            "apex_m": round(c.apex_m, 1),
+            "target_min_speed_kph": round(c.target_min_speed_kph, 1),
+            "target_max_speed_kph": round(c.target_max_speed_kph, 1),
+            "player_min_speed_kph": round(c.player_min_speed_kph, 1) if c.pace_status != "insufficient_data" else None,
+            "min_speed_m": round(c.min_speed_m, 1) if c.min_speed_m is not None else None,
+            "apex_offset_m": round(c.apex_offset_m, 1) if c.apex_offset_m is not None else None,
+            "double_slowdown": c.double_slowdown,
             "status": c.status,
             "pace_status": c.pace_status,
         }
@@ -109,13 +111,16 @@ def build_coach_prompt(
     ]
     return f"""You are a concise race engineer. Coach only {sector_str} on {track.track_name}.
 Evaluated lap: {last_lap_num}; lap time: {player_lap_time_ms} ms.
-Analyse ONLY corner exit speed against the configured target speed, using a 50 km/h buffer:
-- If exit_speed_delta_kph < -50 (more than 50 km/h slower than target), status is below_target (slow).
-- If exit_speed_delta_kph >= -50 (within the 50 km/h buffer or faster), status is on_pace.
+Each corner is graded on minimum corner speed vs target range (±20 km/h) and where the minimum speed occurred relative to apex_m:
+- double_slowdown: slowed early, accelerated, then slowed again -> carry smoother entry speed into one clean apex.
+- late (apex_offset_m > +15 m): overshot the apex -> brake slightly earlier next sector.
+- early (apex_offset_m < -20 m on a braking corner): slowed too early -> brake slightly later and trail-brake to the apex.
+- below_target: min speed below target_min_speed_kph -> carry more apex speed.
+- on_pace / fast: clean apex placement and speed inside or above target range.
 OBSERVATIONS: {json.dumps(observations)}
-Return exactly one plain-text line per supplied turn: Turn <id>: <status>. <one concise exit-speed note>.
+Return exactly one plain-text line per supplied turn: Turn <id>: <status>. <one concise correction or confirmation>.
 Use the supplied status, including insufficient_data. Never call missing data on pace.
-Do not mention braking points, brake boards, throttle pickup distances, or invented timings. No markdown.
+Do not invent corners, braking boards, or unmeasured timings. No markdown.
 """
 
 

@@ -206,11 +206,16 @@ class LapRecorder:
         )
 
         if current:
+            elapsed_drop = current["lastElapsed"] - elapsed
             rewind |= (
                 lap_num < current["lap"]
                 or (
                     lap_num == current["lap"]
-                    and elapsed < current["lastElapsed"]
+                    and elapsed_drop > 0
+                    and (
+                        elapsed_drop > 50
+                        or distance < current["lastDistance"] - 1.0
+                    )
                 )
             )
 
@@ -265,9 +270,12 @@ class LapRecorder:
                 current["sectors"][i] = value
 
         samples = current["samples"]
+        # F1 25 can snap currentLapTimeInMS back a few milliseconds at sector
+        # crossings while distance and session_time advance; keep elapsed monotonic.
+        recorded_elapsed = max(elapsed, current["lastElapsed"]) if samples else elapsed
         gap = bool(
             samples
-            and elapsed - current["lastElapsed"] > 250
+            and recorded_elapsed - current["lastElapsed"] > 250
         )
 
         if gap:
@@ -277,7 +285,7 @@ class LapRecorder:
             current["reasons"].add("non_monotonic_distance")
             gap = True
 
-        current["lastElapsed"] = elapsed
+        current["lastElapsed"] = recorded_elapsed
         current["lastDistance"] = distance
 
         if len(samples) >= self.MAX_SAMPLES:
@@ -433,7 +441,7 @@ class LapRecorder:
         } if (damage is not None or aligned or status is not None) else None
 
         samples.append({
-            "elapsedTimeMs": elapsed,
+            "elapsedTimeMs": recorded_elapsed,
             "distance": distance,
             "lapDistance": distance,
             "speed": speed,

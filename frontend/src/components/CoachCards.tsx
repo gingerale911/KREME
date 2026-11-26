@@ -8,15 +8,18 @@ export interface CoachCorner {
   end_m?: number;
   apex_m?: number;
   sector?: number;
-  pace_status?: string;
-  player_min_speed_kph: number | null;
-  player_exit_speed_kph?: number | null;
-  ideal_apex_speed_kph: number;
-  ideal_exit_speed_kph?: number;
-  exit_speed_delta_kph?: number;
-  speed_buffer_kph?: number;
   status: string;
+  pace_status?: string;
   advice: string;
+  ideal_apex_speed_kph: number;
+  target_min_speed_kph?: number;
+  target_max_speed_kph?: number;
+  player_min_speed_kph: number | null;
+  min_speed_m?: number | null;
+  apex_offset_m?: number | null;
+  apex_speed_delta_kph?: number;
+  speed_buffer_kph?: number;
+  double_slowdown?: boolean;
   sample_count: number;
 }
 
@@ -37,16 +40,17 @@ export interface CoachAnalysisResponse {
 
 const label = (value?: string | null) => (value ?? "").replaceAll("_", " ").toUpperCase();
 const speedText = (kph: number | null | undefined) => (isNumber(kph) ? `${kph.toFixed(0)} km/h` : "—");
-const deltaText = (delta: number | null | undefined) => {
-  if (!isNumber(delta)) return "—";
-  const rounded = Math.round(delta);
-  return `${rounded > 0 ? "+" : ""}${rounded} km/h`;
+const offsetText = (m: number | null | undefined) => {
+  if (!isNumber(m)) return "—";
+  const rounded = Math.round(m);
+  if (rounded === 0) return "At apex";
+  return `${Math.abs(rounded)} m ${rounded > 0 ? "after apex" : "before apex"}`;
 };
 
 function cornerAccent(status: string): string {
-  if (status === "on_pace") return "#31d486";
-  if (status === "below_target" || status === "slow") return "#f2b94b";
-  return "#9ba6b7";
+  if (status === "on_pace" || status === "fast") return "#31d486";
+  if (status === "insufficient_data") return "#9ba6b7";
+  return "#f2b94b";
 }
 
 function CoachMiniMap({
@@ -160,7 +164,7 @@ function CoachMiniMap({
 
   const cornerMarkers = corners
     .map((c) => {
-      const markerDist = c.end_m ?? c.apex_m ?? c.start_m;
+      const markerDist = c.apex_m ?? c.end_m ?? c.start_m;
       if (!isNumber(markerDist)) return null;
       const worldPt = mapGeometry.pointAtDist(markerDist);
       if (!worldPt) return null;
@@ -295,8 +299,9 @@ function CoachMiniMap({
               {isNumber(activeCorner.start_m) && isNumber(activeCorner.end_m)
                 ? `${activeCorner.start_m.toFixed(0)}–${activeCorner.end_m.toFixed(0)} m · `
                 : ""}
-              Exit {speedText(activeCorner.player_exit_speed_kph ?? activeCorner.player_min_speed_kph)} vs{" "}
-              {speedText(activeCorner.ideal_exit_speed_kph ?? activeCorner.ideal_apex_speed_kph)}
+              Min {speedText(activeCorner.player_min_speed_kph)} · Target{" "}
+              {(activeCorner.target_min_speed_kph ?? Math.max(0, activeCorner.ideal_apex_speed_kph - 20)).toFixed(0)}–
+              {(activeCorner.target_max_speed_kph ?? activeCorner.ideal_apex_speed_kph + 20).toFixed(0)} km/h
             </span>
           </>
         ) : (
@@ -348,7 +353,7 @@ export default function CoachCards({
     return () => controller.abort();
   }, [trackOutline, trackId]);
 
-  if (loading) return <p className="coach-empty" role="status">Reading previous-lap corner exit speeds…</p>;
+  if (loading) return <p className="coach-empty" role="status">Reading previous-lap corner apex speeds…</p>;
   if (error) return <p className="coach-error" role="alert">{error}</p>;
   if (!data) return null;
 
@@ -360,7 +365,7 @@ export default function CoachCards({
   return (
     <>
       <div className="coach-provenance">
-        LAP {data.lapNum} · SECTOR {data.nextSector} · EXIT SPEED (50 KM/H BUFFER)
+        LAP {data.lapNum} · SECTOR {data.nextSector} · APEX RANGE (±20 KM/H)
         <span>Hover a turn to highlight on map</span>
       </div>
       <div className="coach-layout">
@@ -369,15 +374,24 @@ export default function CoachCards({
             const cardKey = `${c.turn}-${c.name}`;
             const isOpen = expanded === cardKey;
             const isActive = activeKey === cardKey;
-            const exitSpeed = c.player_exit_speed_kph ?? c.player_min_speed_kph;
-            const targetSpeed = c.ideal_exit_speed_kph ?? c.ideal_apex_speed_kph;
-            const bufferKph = c.speed_buffer_kph ?? 50;
+            const minSpeed = c.player_min_speed_kph;
+            const bufferKph = c.speed_buffer_kph ?? 20;
+            const targetLow = c.target_min_speed_kph ?? Math.max(0, c.ideal_apex_speed_kph - bufferKph);
+            const targetHigh = c.target_max_speed_kph ?? c.ideal_apex_speed_kph + bufferKph;
             const badgeText =
               c.status === "insufficient_data"
                 ? "INSUFFICIENT DATA"
-                : c.pace_status === "slow" || c.status === "below_target"
-                  ? "SLOW (>50 KM/H)"
-                  : "ON PACE";
+                : c.status === "double_slowdown"
+                  ? "DOUBLE SLOWDOWN"
+                  : c.status === "late"
+                    ? "OVERSHOT APEX"
+                    : c.status === "early"
+                      ? "EARLY APEX"
+                      : c.status === "below_target"
+                        ? "SLOW"
+                        : c.pace_status === "fast"
+                          ? "FAST"
+                          : "ON PACE";
 
             return (
               <article
@@ -392,35 +406,35 @@ export default function CoachCards({
               >
                 <button aria-expanded={isOpen} onClick={() => setExpanded(isOpen ? null : cardKey)}>
                   <strong>T{c.turn} <span>{c.name}</span></strong>
-                  <b>{badgeText} · {c.status === "insufficient_data" ? "NO DATA" : `${speedText(exitSpeed)} / ${speedText(targetSpeed)}`}</b>
+                  <b>{badgeText} · {c.status === "insufficient_data" ? "NO DATA" : `${speedText(minSpeed)} · ${targetLow.toFixed(0)}–${targetHigh.toFixed(0)}`}</b>
                   {c.advice && <p className="corner-preview">{c.advice}</p>}
                 </button>
                 <div className="corner-detail">
                   <strong>T{c.turn} · {c.name}</strong>
                   <p>{c.advice}</p>
-                  {c.status !== "insufficient_data" && isNumber(exitSpeed) && (
+                  {c.status !== "insufficient_data" && isNumber(minSpeed) && (
                     <dl>
                       <div>
-                        <dt>Exit speed · {label(c.pace_status ?? c.status)}</dt>
-                        <dd>{speedText(exitSpeed)}</dd>
+                        <dt>Min speed · {label(c.pace_status ?? c.status)}</dt>
+                        <dd>{speedText(minSpeed)}</dd>
                       </div>
                       <div>
-                        <dt>Target exit speed</dt>
-                        <dd>{speedText(targetSpeed)}</dd>
+                        <dt>Target range (±{bufferKph.toFixed(0)} km/h)</dt>
+                        <dd>{targetLow.toFixed(0)}–{targetHigh.toFixed(0)} km/h</dd>
                       </div>
                       <div>
-                        <dt>Delta ({bufferKph.toFixed(0)} km/h buffer)</dt>
-                        <dd>{deltaText(c.exit_speed_delta_kph)}</dd>
+                        <dt>Min point vs apex</dt>
+                        <dd>{offsetText(c.apex_offset_m)}</dd>
                       </div>
-                      {isNumber(c.end_m) && (
+                      {isNumber(c.min_speed_m) && isNumber(c.apex_m) && (
                         <div>
-                          <dt>Corner exit point</dt>
-                          <dd>{c.end_m.toFixed(0)} m</dd>
+                          <dt>Min / Apex distance</dt>
+                          <dd>{c.min_speed_m.toFixed(0)} m / {c.apex_m.toFixed(0)} m</dd>
                         </div>
                       )}
                     </dl>
                   )}
-                  <small>Exit speed checked at corner exit with a {bufferKph.toFixed(0)} km/h buffer. {data.targetSource}.</small>
+                  <small>Apex timing window: -20 m to +15 m around apex. {data.targetSource}.</small>
                 </div>
               </article>
             );

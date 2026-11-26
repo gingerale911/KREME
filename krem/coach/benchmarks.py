@@ -28,6 +28,7 @@ class CornerBenchmark:
     ideal_apex_gear: int
     ideal_throttle_m: float
     notes: str = ""
+    section_type: str = "corner"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -188,7 +189,10 @@ def generate_benchmark_for_track(track_id: int, track_data_dir: Path) -> TrackBe
             track_name, track_length, s1_end, s2_end, sections = load_track_sections_from_json(json_path)
             corners = []
             for s in sections:
+                section_type = str(s.get("type") or "corner").lower()
                 turn = str(s.get("turn") or "")
+                if section_type == "straight" or (section_type == "complex" and not turn):
+                    continue
                 name = str(s.get("name") or (f"Turn {turn}" if turn else "Section"))
                 start_m = float(s.get("start_m", 0.0))
                 end_m = float(s.get("end_m", start_m + 50.0))
@@ -228,6 +232,7 @@ def generate_benchmark_for_track(track_id: int, track_data_dir: Path) -> TrackBe
                     ideal_apex_gear=ideal_gear,
                     ideal_throttle_m=ideal_throttle,
                     notes=notes,
+                    section_type=section_type,
                 ))
 
             return TrackBenchmark(

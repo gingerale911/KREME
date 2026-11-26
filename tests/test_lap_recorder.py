@@ -307,3 +307,31 @@ def test_lap_samples_record_all_player_values():
     assert sample['ersMode'] == 3
     assert sample['fuel'] == pytest.approx(34.25)
     assert sample['fuelLaps'] == pytest.approx(12.6)
+
+
+def test_sector_crossing_clock_snap_does_not_wipe_lap():
+    r = recorder()
+    epoch = r.epoch
+    add(r, pair(1, lap=1, elapsed=0, distance=0, at=0.0))
+    add(r, pair(2, lap=1, elapsed=39249, distance=35, at=39.250))
+    # Simulate F1 25 sector-split snap (-12 ms) while session_time and distance advance
+    add(r, pair(3, lap=1, elapsed=39237, distance=40, at=39.261))
+    add(r, pair(4, lap=1, elapsed=39270, distance=95, at=39.283))
+    add(r, pair(5, lap=2, elapsed=10, distance=2, last=60000, at=60.0))
+    r.flush(force=True)
+
+    assert r.epoch == epoch
+    assert len(r.records) == 1
+    lap1 = r.records[0]
+    assert [s['distance'] for s in lap1['samples']] == [0, 35, 40, 95]
+    assert [s['elapsedTimeMs'] for s in lap1['samples']] == [0, 39249, 39249, 39270]
+    assert 'partial_start' not in lap1['qualityReasons']
+
+    # Real rewind (>50 ms backward on same lap) still invalidates
+    r2 = recorder()
+    epoch2 = r2.epoch
+    add(r2, pair(1, lap=1, elapsed=0, distance=0, at=0.0))
+    add(r2, pair(2, lap=1, elapsed=5000, distance=50, at=5.0))
+    add(r2, pair(3, lap=1, elapsed=4000, distance=30, at=5.01))
+    r2.flush(force=True)
+    assert r2.epoch == epoch2 + 1

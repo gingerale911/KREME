@@ -216,19 +216,6 @@ function displayNumber(value: MaybeNumber, digits = 0, suffix = ""): string {
   return isNumber(value) ? `${value.toFixed(digits)}${suffix}` : "—";
 }
 
-function formatBytes(bytes: MaybeNumber): string {
-  if (!isNumber(bytes) || bytes < 0) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unitIdx = 0;
-  while (value >= 1024 && unitIdx < units.length - 1) {
-    value /= 1024;
-    unitIdx += 1;
-  }
-  const digits = unitIdx === 0 ? 0 : value >= 100 ? 1 : 2;
-  return `${value.toFixed(digits)} ${units[unitIdx]}`;
-}
-
 function formatTime(ms: MaybeNumber): string {
   if (!isNumber(ms) || ms <= 0) return "—";
   const minutes = Math.floor(ms / 60_000);
@@ -272,7 +259,10 @@ function useTelemetry() {
       socket = new WebSocket(socketAddress());
       socket.onopen = () => {
         attempts = 0;
-        if (active) setState("live");
+        if (active) {
+          setState("live");
+          setLastMessageAt(Date.now());
+        }
       };
       socket.onmessage = (event) => {
         try {
@@ -587,7 +577,7 @@ function App() {
   const lastSample = useRef<string>("");
   const lastGameTime = useRef<number | null>(null);
   const traceGap = useRef(false);
-  const socketConnected = state === "live" && lastMessageAt !== null && now - lastMessageAt < 2_000;
+  const socketConnected = state === "live" && lastMessageAt !== null && now - lastMessageAt < 5_000;
 
   useEffect(() => {
     fetch("/api/coach/status")
@@ -894,7 +884,7 @@ function App() {
               <div className="coach-toolbar"><div><span className="eyebrow">PREVIOUS LAP → UPCOMING SECTOR</span><h3>Corner briefing · S{currentSector ? currentSector % 3 + 1 : "—"}</h3></div>
                 <button className="coach-button" onClick={runCoachAnalysis} disabled={coachLoading || !currentSector}>{coachLoading ? "Analysing…" : "✦ Analyse next sector"}</button>
               </div>
-              <p className="coach-empty">Corner exit speed from your previous lap (50 km/h buffer), one card per turn.</p>
+              <p className="coach-empty">Apex speed range (±20 km/h) and placement from your previous lap, one card per turn.</p>
               {!hasApiKey && <details className="coach-key-settings"><summary>Connect Gemini for AI coaching</summary><div><input type="password" aria-label="Gemini API key" placeholder="Gemini API key" value={apiKeyInput} onChange={e => setApiKeyInput(e.target.value)} /><button onClick={saveApiKey}>Save key</button><span>{keySaveMsg}</span></div></details>}
             </section>
 
@@ -913,7 +903,7 @@ function App() {
 
       <footer className="footer">
         <span>KREM <i>·</i> LIVE TELEMETRY</span>
-        <span>PACKETS {displayNumber(stats?.packetsReceived)} <i>·</i> ACCEPTED {displayNumber(stats?.packetsAccepted)} ({formatBytes(stats?.bytesAccepted ?? stats?.bytesReceived)}) <i>·</i> REJECTED {displayNumber(stats?.packetsRejected)}</span>
+        <span>PACKETS {displayNumber(stats?.packetsReceived)} <i>·</i> ACCEPTED {displayNumber(stats?.packetsAccepted)} <i>·</i> REJECTED {displayNumber(stats?.packetsRejected)}</span>
         <span>{lastMessageAt ? `UPDATED ${new Date(lastMessageAt).toLocaleTimeString()}` : "WAITING FOR DATA"}</span>
       </footer>
       {coachOpen && <div className="coach-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCoachOpen(false); }} role="presentation">

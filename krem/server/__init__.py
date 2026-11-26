@@ -107,12 +107,12 @@ def create_app(
         return FileResponse(file_path)
 
     @app.get("/api/status")
-    async def status():
+    def status():
         """Get current server and connection status."""
         return _stats_snapshot(protocol)
 
     @app.get("/api/snapshot")
-    async def live_snapshot():
+    def live_snapshot():
         """Get the full dashboard snapshot."""
         return _dashboard_snapshot(
             live_state,
@@ -121,27 +121,27 @@ def create_app(
         )
 
     @app.get("/api/session")
-    async def session_info():
+    def session_info():
         """Get current session information."""
-        return live_state.snapshot()["session"]
+        return live_state.snapshot(include_laps=False)["session"]
 
     @app.get("/api/player")
-    async def player_info():
+    def player_info():
         """Get current player state."""
-        return live_state.snapshot()["player"]
+        return live_state.snapshot(include_laps=False)["player"]
 
     @app.get("/api/events")
-    async def events():
+    def events():
         """Get recent events."""
         return live_state.events_snapshot()
 
     @app.get("/api/laps")
-    async def lap_history():
+    def lap_history():
         """Get in-memory lap history for the current timeline."""
         return live_state.lap_history_snapshot()
 
     @app.get("/api/laps/current")
-    async def current_lap():
+    def current_lap():
         """Get the current in-progress lap telemetry samples."""
         lap = live_state.current_lap_snapshot()
         if lap is None:

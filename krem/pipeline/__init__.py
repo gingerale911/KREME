@@ -334,19 +334,30 @@ class LiveState:
         with self._lock:
             self.lap_recorder.flush(force=True)
             lap = self.lap_recorder.current_lap_snapshot()
-            return _json_safe(lap) if lap else None
+            if lap is not None:
+                lap = dict(lap, samples=list(lap["samples"]))
+        return _json_safe(lap) if lap else None
 
     def lap_history_snapshot(self) -> list[dict[str, Any]]:
         """Return the completed lap records for this telemetry session."""
         with self._lock:
             self.lap_recorder.flush()
-            return [_json_safe(item) for item in self.lap_recorder.records]
+            records = [
+                dict(item, samples=list(item["samples"]))
+                for item in self.lap_recorder.records
+            ]
+        return [_json_safe(item) for item in records]
 
     def snapshot(self, include_laps: bool = True) -> dict[str, Any]:
         """Create a compact, JSON-safe snapshot for API and WebSocket frames."""
+        raw_laps: list[dict[str, Any]] = []
         with self._lock:
             if include_laps:
                 self.lap_recorder.flush()
+                raw_laps = [
+                    dict(item, samples=list(item["samples"]))
+                    for item in self.lap_recorder.records
+                ]
             idx = self.player_car_index
             player_name, player_number = self._driver_info(idx)
             sector3_time = None
@@ -438,11 +449,7 @@ class LiveState:
                 "events": [
                     _json_safe(event) for event in list(self.events)[-10:]
                 ],
-                "laps": (
-                    [_json_safe(item) for item in self.lap_recorder.records]
-                    if include_laps
-                    else []
-                ),
+                "laps": [],
                 "recorder": self.lap_recorder.status(),
                 "sectorTiming": self.sector_timing.snapshot(self.player, idx, self.lap_recorder.records),
                 "frameCount": self.frame_count,
@@ -501,7 +508,9 @@ class LiveState:
             mask(retained, missing_only=True)
             mask(result, missing_only=False)
             result["retainedLive"] = retained
-            return result
+        if include_laps:
+            result["laps"] = [_json_safe(item) for item in raw_laps]
+        return result
 
     def events_snapshot(self, limit: int | None = None) -> list[dict[str, Any]]:
         """Return a JSON-safe copy of recent event records."""
