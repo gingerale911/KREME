@@ -57,6 +57,18 @@ CREATE TABLE IF NOT EXISTS lap_samples (
     overall_frame_id BIGINT,
     session_time DOUBLE,
     gap_before BOOLEAN NOT NULL DEFAULT FALSE,
+    position INTEGER,
+    gear INTEGER,
+    rpm INTEGER,
+    drs INTEGER,
+    drs_allowed INTEGER,
+    suggested_gear INTEGER,
+    g_lat DOUBLE,
+    g_long DOUBLE,
+    ers_store DOUBLE,
+    ers_mode INTEGER,
+    fuel DOUBLE,
+    fuel_laps DOUBLE,
     tyres_json VARCHAR,
     damage_json VARCHAR,
     PRIMARY KEY (lap_id, sample_index)
@@ -93,7 +105,22 @@ class LapDatabase:
         with self._lock:
             self._ensure_open()
             self.connection.execute(SCHEMA)
-            for col in ("tyres_json VARCHAR", "damage_json VARCHAR"):
+            for col in (
+                "tyres_json VARCHAR",
+                "damage_json VARCHAR",
+                "position INTEGER",
+                "gear INTEGER",
+                "rpm INTEGER",
+                "drs INTEGER",
+                "drs_allowed INTEGER",
+                "suggested_gear INTEGER",
+                "g_lat DOUBLE",
+                "g_long DOUBLE",
+                "ers_store DOUBLE",
+                "ers_mode INTEGER",
+                "fuel DOUBLE",
+                "fuel_laps DOUBLE",
+            ):
                 try:
                     self.connection.execute(f"ALTER TABLE lap_samples ADD COLUMN {col}")
                 except Exception:

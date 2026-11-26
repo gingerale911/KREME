@@ -49,6 +49,7 @@ class LapRecorder:
         self.last_event_frame = -1
         self.latest_damage: DecodedPacket | None = None
         self.latest_status: DecodedPacket | None = None
+        self.latest_motion: DecodedPacket | None = None
 
         # Optional background persistence writer.
         self.storage_writer = None
@@ -70,6 +71,7 @@ class LapRecorder:
         self.history_packet = None
         self.latest_damage = None
         self.latest_status = None
+        self.latest_motion = None
 
     def ingest(self, packet: DecodedPacket) -> None:
         h = packet.header
@@ -106,6 +108,7 @@ class LapRecorder:
             PacketId.CAR_TELEMETRY,
             PacketId.CAR_DAMAGE,
             PacketId.CAR_STATUS,
+            PacketId.MOTION,
         ):
             if not 0 <= identity[1] < len(packet.data["cars"]):
                 return
@@ -143,6 +146,8 @@ class LapRecorder:
                 self.latest_damage = entry[PacketId.CAR_DAMAGE]
             if PacketId.CAR_STATUS in entry:
                 self.latest_status = entry[PacketId.CAR_STATUS]
+            if PacketId.MOTION in entry:
+                self.latest_motion = entry[PacketId.MOTION]
 
             lap = entry.get(PacketId.LAP_DATA)
             if lap is not None:
@@ -151,6 +156,7 @@ class LapRecorder:
                     entry.get(PacketId.CAR_TELEMETRY),
                     self.latest_damage,
                     self.latest_status,
+                    self.latest_motion,
                 )
 
         self._apply_history()
@@ -161,6 +167,7 @@ class LapRecorder:
         telemetry: DecodedPacket | None,
         damage: DecodedPacket | None = None,
         status: DecodedPacket | None = None,
+        motion: DecodedPacket | None = None,
     ) -> None:
         h = packet.header
         car = packet.data["cars"][h.player_car_index]
@@ -169,6 +176,14 @@ class LapRecorder:
         elapsed = int(car["currentLapTimeInMS"])
         distance = number(car["lapDistance"])
         session_time = number(h.session_time)
+
+        car_position = None
+        try:
+            pos_val = int(car["carPosition"])
+            if pos_val > 0:
+                car_position = pos_val
+        except Exception:
+            pass
 
         if session_time is None or distance is None:
             if self.current:
@@ -272,7 +287,7 @@ class LapRecorder:
         )
 
         speed = throttle = brake = None
-        steer = gear = rpm = drs = None
+        steer = gear = rpm = drs = suggested_gear = None
         tyres_surface = tyres_inner = tyres_pressure = brakes_temp = None
 
         if aligned:
@@ -306,6 +321,10 @@ class LapRecorder:
                 pass
             try:
                 drs = int(values["drs"])
+            except Exception:
+                pass
+            try:
+                suggested_gear = int(telemetry.data.get("suggestedGear", 0))
             except Exception:
                 pass
             try:
@@ -350,6 +369,8 @@ class LapRecorder:
 
         actual_compound = visual_compound = age_laps = None
         actual_name = visual_name = None
+        drs_allowed = ers_mode = None
+        ers_store = fuel = fuel_laps = None
         if status is not None and 0 <= h.player_car_index < len(status.data["cars"]):
             st_car = status.data["cars"][h.player_car_index]
             try:
@@ -358,6 +379,33 @@ class LapRecorder:
                 visual_compound = int(st_car["visualTyreCompound"])
                 visual_name = TYRE_VISUAL_NAMES.get(visual_compound)
                 age_laps = int(st_car["tyresAgeLaps"])
+            except Exception:
+                pass
+            try:
+                drs_allowed = int(st_car["drsAllowed"])
+                ers_store = number(st_car["ersStoreEnergy"])
+                if ers_store is not None:
+                    ers_store = round(ers_store, 0)
+                ers_mode = int(st_car["ersDeployMode"])
+                fuel = number(st_car["fuelInTank"])
+                if fuel is not None:
+                    fuel = round(fuel, 2)
+                fuel_laps = number(st_car["fuelRemainingLaps"])
+                if fuel_laps is not None:
+                    fuel_laps = round(fuel_laps, 2)
+            except Exception:
+                pass
+
+        g_lat = g_long = None
+        if motion is not None and 0 <= h.player_car_index < len(motion.data["cars"]):
+            mot_car = motion.data["cars"][h.player_car_index]
+            try:
+                lat_val = number(mot_car["gForceLateral"])
+                long_val = number(mot_car["gForceLongitudinal"])
+                if lat_val is not None:
+                    g_lat = round(lat_val, 2)
+                if long_val is not None:
+                    g_long = round(long_val, 2)
             except Exception:
                 pass
 
@@ -389,12 +437,21 @@ class LapRecorder:
             "rpm": rpm,
             "engineRPM": rpm,
             "drs": drs,
+            "drsAllowed": drs_allowed,
+            "suggestedGear": suggested_gear,
+            "gLat": g_lat,
+            "gLong": g_long,
+            "ersStore": ers_store,
+            "ersMode": ers_mode,
+            "fuel": fuel,
+            "fuelLaps": fuel_laps,
             "frameId": int(h.frame_identifier),
             "overallFrameId": int(h.overall_frame_identifier),
             "sessionTime": session_time,
             "sessionUid": str(h.session_uid),
             "playerCarIndex": int(h.player_car_index),
             "lap": lap_num,
+            "position": car_position,
             "gapBefore": gap,
             "tyres": tyres_dict,
             "damage": damage_dict,

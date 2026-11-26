@@ -115,10 +115,16 @@ export interface LapSample {
   rpm?: MaybeNumber;
   engineRPM?: MaybeNumber;
   drs?: MaybeNumber;
+  drsAllowed?: MaybeNumber;
   suggestedGear?: MaybeNumber;
   gLat?: MaybeNumber;
   gLong?: MaybeNumber;
+  ersStore?: MaybeNumber;
+  ersMode?: MaybeNumber;
+  fuel?: MaybeNumber;
+  fuelLaps?: MaybeNumber;
   sessionTime?: MaybeNumber;
+  position?: MaybeNumber;
   tyres?: Player["tyres"] | null;
   damage?: Player["damage"] | null;
 }
@@ -441,9 +447,9 @@ export function TrackMap({
             </>
           )
         )}
-        {bounds && liveTracePoints.length > 1 && (
+        {bounds && transformedWorld.mappedHistory.length > 1 && (
           <polyline
-            points={(trackOutline ? liveTracePoints.slice(-90) : liveTracePoints)
+            points={(trackOutline ? transformedWorld.mappedHistory.slice(-90) : transformedWorld.mappedHistory)
               .map((point) => {
                 const projected = bounds.project(point);
                 return `${projected.x.toFixed(1)},${projected.y.toFixed(1)}`;

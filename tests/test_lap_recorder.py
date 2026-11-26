@@ -248,3 +248,60 @@ def test_mid_lap_damage_change_only_affects_samples_from_that_point():
     # Frame 3 at the hit has 35% wing damage and 12% tyre wear
     assert samples[2]['damage']['frontLeftWingDamage'] == 35
     assert samples[2]['tyres']['wearPct'][0] == 12.0
+
+
+def test_lap_samples_record_car_position_per_frame():
+    r = recorder()
+    p1, t1 = pair(1, lap=1, elapsed=0, distance=0)
+    p1.data['cars'][0]['carPosition'] = 3
+    p2, t2 = pair(2, lap=1, elapsed=100, distance=18)
+    p2.data['cars'][0]['carPosition'] = 0  # unset / invalid position
+    add(r, [p1, t1, p2, t2])
+
+    p3, t3 = pair(3, lap=2, elapsed=0, distance=0, last=200)
+    p3.data['cars'][0]['carPosition'] = 4
+    add(r, [p3, t3])
+    r.flush(force=True)
+
+    assert len(r.records) == 1
+    lap1_samples = r.records[0]['samples']
+    assert lap1_samples[0]['position'] == 3
+    assert lap1_samples[1]['position'] is None
+    assert r.current['samples'][0]['position'] == 4
+
+
+def test_lap_samples_record_all_player_values():
+    r = recorder()
+    p1, t1 = pair(1, lap=1, elapsed=0, distance=0)
+    t1.data['cars'][0]['gear'] = 6
+    t1.data['cars'][0]['engineRPM'] = 11400
+    t1.data['cars'][0]['drs'] = 1
+    t1.data['suggestedGear'] = 7
+
+    s1 = make(PacketId.CAR_STATUS, 1)
+    s1.data['cars'][0]['drsAllowed'] = 1
+    s1.data['cars'][0]['ersStoreEnergy'] = 2_450_000.0
+    s1.data['cars'][0]['ersDeployMode'] = 3
+    s1.data['cars'][0]['fuelInTank'] = 34.25
+    s1.data['cars'][0]['fuelRemainingLaps'] = 12.6
+
+    m1 = make(PacketId.MOTION, 1)
+    m1.data['cars'][0]['gForceLateral'] = -1.85
+    m1.data['cars'][0]['gForceLongitudinal'] = 2.4
+
+    add(r, [s1, m1, p1, t1])
+    add(r, pair(2, lap=2, last=200))
+    r.flush(force=True)
+
+    sample = r.records[0]['samples'][0]
+    assert sample['gear'] == 6
+    assert sample['rpm'] == 11400
+    assert sample['drs'] == 1
+    assert sample['drsAllowed'] == 1
+    assert sample['suggestedGear'] == 7
+    assert sample['gLat'] == pytest.approx(-1.85)
+    assert sample['gLong'] == pytest.approx(2.4)
+    assert sample['ersStore'] == 2_450_000.0
+    assert sample['ersMode'] == 3
+    assert sample['fuel'] == pytest.approx(34.25)
+    assert sample['fuelLaps'] == pytest.approx(12.6)

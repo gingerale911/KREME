@@ -563,11 +563,11 @@ export default function TelemetryReplayPanel({
         heading: carHeading,
         name: "YOU",
         driverNumber: livePlayer?.driverNumber ?? "1",
-        position: 1,
+        position: isNumber(activeSample?.position) ? activeSample.position : 1,
         isPlayer: true,
       },
     ];
-  }, [carPosition, carHeading, livePlayer]);
+  }, [carPosition, carHeading, livePlayer, activeSample?.position]);
 
   // Car trail history on the map
   const mapHistory = useMemo<Position[]>(() => {
@@ -627,30 +627,30 @@ export default function TelemetryReplayPanel({
     } : undefined);
 
     return {
-      speed: s?.speed ?? 0,
-      throttle: s?.throttle ?? 0,
-      brake: s?.brake ?? 0,
-      steer: s?.steer ?? s?.steering ?? 0,
-      gear: s?.gear ?? (s?.speed && s.speed > 5 ? 3 : 0),
-      rpm: s?.rpm ?? s?.engineRPM ?? (s?.speed ? Math.min(12500, Math.round(5000 + (s.speed / 340) * 7000)) : 4200),
-      drs: s?.drs ?? 0,
-      drsAllowed: s?.drs ?? 0,
+      speed: s?.speed ?? null,
+      throttle: s?.throttle ?? null,
+      brake: s?.brake ?? null,
+      steer: s?.steer ?? s?.steering ?? null,
+      gear: s?.gear ?? null,
+      rpm: s?.rpm ?? s?.engineRPM ?? null,
+      drs: s?.drs ?? null,
+      drsAllowed: s?.drsAllowed ?? null,
       lapDist: s?.distance ?? 0,
       lapTime: currentTimeMs,
       lapNum: activeLap?.lap ?? 1,
       sector: currentSectorNumber - 1,
-      position: livePlayer?.position ?? 1,
+      position: isNumber(s?.position) ? s.position : null,
       driverNumber: livePlayer?.driverNumber,
       invalid: activeLap?.invalid ?? false,
-      suggestedGear: s?.suggestedGear ?? (s?.gear ? Math.min(8, Math.max(1, s.gear + 1)) : 4),
-      gLat: s?.gLat ?? (s?.steer ? Number((s.steer * 2.8).toFixed(2)) : 0.0),
-      gLong: s?.gLong ?? (s?.brake && s.brake > 0.1 ? Number((-s.brake * 4.2).toFixed(2)) : s?.throttle ? Number((s.throttle * 1.5).toFixed(2)) : 0.0),
-      ersStore: 3_800_000,
-      ersMode: 2,
-      fuel: 48.5,
-      fuelLaps: 22.4,
-      tyreCompound: resolvedTyres?.actualCompoundName ?? resolvedTyres?.visualCompoundName ?? "Soft",
-      tyreAge: resolvedTyres?.ageLaps ?? activeLap?.lap ?? 1,
+      suggestedGear: s?.suggestedGear ?? null,
+      gLat: s?.gLat ?? null,
+      gLong: s?.gLong ?? null,
+      ersStore: s?.ersStore ?? null,
+      ersMode: s?.ersMode ?? null,
+      fuel: s?.fuel ?? null,
+      fuelLaps: s?.fuelLaps ?? null,
+      tyreCompound: resolvedTyres?.actualCompoundName ?? resolvedTyres?.visualCompoundName ?? "—",
+      tyreAge: resolvedTyres?.ageLaps ?? null,
       tyres: resolvedTyres,
       damage: resolvedDamage,
     };
@@ -1117,8 +1117,8 @@ export default function TelemetryReplayPanel({
             <Stat label="SUGGESTED GEAR" value={isNumber(playerTelemetry?.suggestedGear) && playerTelemetry.suggestedGear > 0 ? String(playerTelemetry.suggestedGear) : "—"} />
             <Stat label="LATERAL G" value={displayNumber(playerTelemetry?.gLat, 2)} />
             <Stat label="LONGITUDINAL G" value={displayNumber(playerTelemetry?.gLong, 2)} />
-            <Stat label="DRS" value={playerTelemetry?.drs ? "OPEN" : "CLOSED"} />
-            <Stat label="DRS AVAILABLE" value={playerTelemetry?.drsAllowed ? "YES" : "NO"} />
+            <Stat label="DRS" value={playerTelemetry?.drs == null ? "—" : playerTelemetry.drs ? "OPEN" : "CLOSED"} />
+            <Stat label="DRS AVAILABLE" value={playerTelemetry?.drsAllowed == null ? "—" : playerTelemetry.drsAllowed ? "YES" : "NO"} />
             <Stat label="ERS STORE" value={displayNumber(isNumber(playerTelemetry?.ersStore) ? playerTelemetry.ersStore / 1_000_000 : null, 2)} unit="MJ" />
             <Stat label="ERS MODE" value={displayNumber(playerTelemetry?.ersMode)} />
             <Stat label="FUEL" value={displayNumber(playerTelemetry?.fuel, 1)} unit="KG" />

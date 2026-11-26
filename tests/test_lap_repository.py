@@ -195,3 +195,52 @@ def test_lap_trace_persists_tyres_and_damage(sample_lap):
         assert trace[0]["tyres"]["wearPct"] == [5.0, 5.0, 5.0, 5.0]
         assert trace[2]["damage"]["frontLeftWingDamage"] == 40
         assert trace[2]["tyres"]["wearPct"] == [15.0, 5.0, 5.0, 5.0]
+
+
+def test_lap_trace_persists_position(sample_lap):
+    sample_lap["samples"][0]["position"] = 3
+    sample_lap["samples"][1]["position"] = 4
+
+    with LapDatabase(":memory:") as db:
+        repo = LapRepository(db)
+        lap_id = repo.save_lap(sample_lap)
+
+        trace = repo.get_lap_trace(lap_id)
+
+        assert trace[0]["position"] == 3
+        assert trace[1]["position"] == 4
+        assert trace[2]["position"] is None
+
+
+def test_lap_trace_persists_all_player_values(sample_lap):
+    sample_lap["samples"][0].update({
+        "gear": 5,
+        "rpm": 10800,
+        "drs": 1,
+        "drsAllowed": 1,
+        "suggestedGear": 6,
+        "gLat": -1.42,
+        "gLong": 1.95,
+        "ersStore": 3100000.0,
+        "ersMode": 2,
+        "fuel": 41.5,
+        "fuelLaps": 18.2,
+    })
+
+    with LapDatabase(":memory:") as db:
+        repo = LapRepository(db)
+        lap_id = repo.save_lap(sample_lap)
+
+        trace = repo.get_lap_trace(lap_id)
+        s = trace[0]
+        assert s["gear"] == 5
+        assert s["rpm"] == 10800
+        assert s["drs"] == 1
+        assert s["drsAllowed"] == 1
+        assert s["suggestedGear"] == 6
+        assert s["gLat"] == pytest.approx(-1.42)
+        assert s["gLong"] == pytest.approx(1.95)
+        assert s["ersStore"] == 3100000.0
+        assert s["ersMode"] == 2
+        assert s["fuel"] == pytest.approx(41.5)
+        assert s["fuelLaps"] == pytest.approx(18.2)

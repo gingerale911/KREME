@@ -451,9 +451,9 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
             </>
           )
         )}
-        {bounds && liveTracePoints.length > 1 && (
+        {bounds && transformedWorld.mappedHistory.length > 1 && (
           <polyline
-            points={(trackOutline ? liveTracePoints.slice(-90) : liveTracePoints).map((point) => {
+            points={(trackOutline ? transformedWorld.mappedHistory.slice(-90) : transformedWorld.mappedHistory).map((point) => {
               const projected = bounds.project(point);
               return `${projected.x.toFixed(1)},${projected.y.toFixed(1)}`;
             }).join(" ")}
