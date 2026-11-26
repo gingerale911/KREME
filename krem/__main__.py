@@ -6,7 +6,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import shutil
 import signal
+import subprocess
+import sys
 from pathlib import Path
 
 import uvicorn
@@ -19,6 +22,90 @@ from krem.pipeline import LiveState
 from krem.server import create_app
 from krem.storage import LapDatabase, LapRepository
 from krem.storage.lap_writer import LapStorageWriter
+
+
+# ---------------------------------------------------------------------
+# Frontend auto-build
+# ---------------------------------------------------------------------
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+FRONTEND_DIST = FRONTEND_DIR / "dist"
+
+
+def _frontend_needs_build() -> bool:
+    """Return True if frontend/dist is missing or older than sources."""
+
+    index = FRONTEND_DIST / "index.html"
+
+    if not index.exists():
+        return True
+
+    # Quick staleness check: if any .tsx/.ts source is newer than
+    # the built index.html, trigger a rebuild.
+    dist_mtime = index.stat().st_mtime
+    src_dir = FRONTEND_DIR / "src"
+
+    if not src_dir.is_dir():
+        return False  # No source tree — nothing to build
+
+    for src_file in src_dir.rglob("*"):
+        if src_file.suffix in (".ts", ".tsx", ".css", ".html"):
+            if src_file.stat().st_mtime > dist_mtime:
+                return True
+
+    return False
+
+
+def ensure_frontend_built(*, force: bool = False) -> bool:
+    """Build the React frontend if dist is missing or stale.
+
+    Returns True if the build ran (or was already up-to-date).
+    Returns False if npm is not available (the fallback status page
+    will be served instead).
+    """
+
+    logger = logging.getLogger("krem.frontend")
+
+    if not force and not _frontend_needs_build():
+        logger.debug("Frontend dist is up-to-date, skipping build.")
+        return True
+
+    npm = shutil.which("npm")
+
+    if npm is None:
+        logger.warning(
+            "npm not found — cannot auto-build the frontend.  "
+            "Install Node.js or run 'npm run build' in the frontend/ "
+            "directory manually.",
+        )
+        return False
+
+    # Install dependencies if node_modules is absent
+    node_modules = FRONTEND_DIR / "node_modules"
+
+    if not node_modules.is_dir():
+        logger.info("Installing frontend dependencies (npm install)...")
+        subprocess.run(
+            [npm, "install"],
+            cwd=str(FRONTEND_DIR),
+            check=True,
+            capture_output=True,
+        )
+
+    logger.info("Building frontend (npm run build)...")
+    result = subprocess.run(
+        [npm, "run", "build"],
+        cwd=str(FRONTEND_DIR),
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        logger.error("Frontend build failed:\n%s", result.stderr)
+        return False
+
+    logger.info("Frontend built successfully → %s", FRONTEND_DIST)
+    return True
 
 
 def setup_logging(level: str = "INFO") -> None:
@@ -375,12 +462,33 @@ def main() -> None:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
 
+    parser.add_argument(
+        "--no-build",
+        action="store_true",
+        help="Skip automatic frontend build on startup",
+    )
+
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="Force rebuild the frontend even if dist is up-to-date",
+    )
+
     args = parser.parse_args()
     setup_logging(args.log_level)
 
     logger = logging.getLogger("krem")
 
     logger.info("KREM — F1 25 Telemetry Dashboard")
+
+    # Auto-build frontend so everything is served from one port
+    if not args.no_build:
+        ensure_frontend_built(force=args.rebuild)
+
+    logger.info(
+        "Dashboard → http://localhost:%d  (single-port: API + WebSocket + UI)",
+        args.web_port,
+    )
 
     if args.replay:
         asyncio.run(

@@ -7,7 +7,7 @@ captures, and serves a local status dashboard and live JSON API.
 ## Requirements
 
 - Python 3.9 or newer
-- Node.js 18 or newer and npm (to build the dashboard)
+- Node.js 18 or newer and npm (for the dashboard — auto-installed on first run)
 - F1 25 configured to send UDP telemetry using **2025** format to port `20777`
 
 ## Install
@@ -20,34 +20,26 @@ source .venv/bin/activate
 python -m pip install -e ".[dev]"
 ```
 
-Build the React dashboard once so KREM can serve it:
-
-```sh
-cd frontend
-npm ci
-npm run build
-cd ..
-```
-
-For the planned Gemini coaching integration, install the optional AI Studio
+For the Gemini coaching integration, install the optional AI Studio
 client as well:
 
 ```sh
 python -m pip install -e ".[coach]"
 ```
 
-LLM requests will use the Gemini API from Google AI Studio. The coach is not
-implemented yet; its API key will remain server-side.
-
 ## Run
+
+**Single command, single port** — the frontend is auto-built on startup:
 
 ```sh
 python -m krem
 ```
 
-Open [http://localhost:8765](http://localhost:8765). By default KREM listens
-on `0.0.0.0:20777` and records captures in `captures/`. If the frontend has
-not been built, the server shows a diagnostic status page instead.
+Open [http://localhost:8765](http://localhost:8765). Everything — the React
+dashboard, the REST API, and the WebSocket — runs on **one port (8765)**.
+
+The frontend is built automatically if `frontend/dist` is missing or stale.
+If Node.js / npm is not installed, KREM falls back to a diagnostic status page.
 
 Useful options:
 
@@ -55,6 +47,8 @@ Useful options:
 python -m krem --port 20778 --web-port 8766
 python -m krem --no-record
 python -m krem --replay captures/example.f1udp --replay-speed 2
+python -m krem --rebuild          # Force-rebuild the frontend
+python -m krem --no-build         # Skip the auto-build check
 ```
 
 The dashboard and `/api/status`, `/api/snapshot`, `/api/session`, `/api/player`,

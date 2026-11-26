@@ -89,8 +89,6 @@ def create_app(
         )
 
         return _status_page(live_state, protocol)
-
-    @app.get("/track_data/{track_file}")
     async def track_data(track_file: str):
         """Serve prerendered track geometry files."""
 
@@ -394,6 +392,29 @@ def create_app(
 
         except Exception as exc:
             logger.error("WebSocket error: %s", exc)
+
+    # ---------------------------------------------------------
+    # SPA catch-all: serve index.html for any unmatched GET
+    # so client-side routing works on a single port.
+    # ---------------------------------------------------------
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str):
+        """Serve index.html for any path not matched by API/static routes."""
+
+        # Don't intercept API or WebSocket paths
+        if full_path.startswith("api/") or full_path == "ws":
+            raise HTTPException(status_code=404)
+
+        index_file = frontend_dist / "index.html"
+
+        if index_file.exists():
+            return FileResponse(index_file)
+
+        raise HTTPException(
+            status_code=404,
+            detail="Frontend not built. Run: python -m krem --rebuild",
+        )
 
     return app
 
