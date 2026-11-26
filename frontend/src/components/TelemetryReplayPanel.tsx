@@ -68,13 +68,17 @@ export default function TelemetryReplayPanel({
   const [loadingDb, setLoadingDb] = useState(false);
   const [dbError, setDbError] = useState("");
 
-  // In-progress lap fetched from /api/laps/current
+  // In-progress and completed laps fetched from /api/laps/current and /api/laps
   const [inProgressLap, setInProgressLap] = useState<LapSummary | null>(null);
+  const [fetchedLiveLaps, setFetchedLiveLaps] = useState<LapSummary[]>([]);
 
   // Available laps list for replay
   const [selectedLapId, setSelectedLapId] = useState<string>("");
   const [activeLap, setActiveLap] = useState<LapSummary | null>(null);
   const [loadingTrace, setLoadingTrace] = useState(false);
+
+  // Track which (sourceMode, selectedLapId) was last initialized so periodic refreshes don't reset playback
+  const lastLoadedKeyRef = useRef<string>("");
 
   // Track outline state (if replaying another track)
   const [replayTrackOutline, setReplayTrackOutline] = useState<TrackOutline | null>(null);
@@ -90,8 +94,17 @@ export default function TelemetryReplayPanel({
   const scrubberRef = useRef<HTMLDivElement>(null);
   const isDraggingScrubber = useRef(false);
 
-  // 1. Fetch current in-progress lap on mount / tab switch
+  // 1. Fetch live completed laps + current in-progress lap on mount / interval
   const refreshCurrentLap = useCallback(() => {
+    fetch("/api/laps")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((laps) => {
+        if (Array.isArray(laps)) {
+          setFetchedLiveLaps(laps);
+        }
+      })
+      .catch(() => {});
+
     fetch("/api/laps/current")
       .then((res) => (res.ok ? res.json() : null))
       .then((lap) => {
@@ -112,32 +125,35 @@ export default function TelemetryReplayPanel({
 
   // Combine live recorded laps + in-progress lap
   const currentSessionLaps: LapSummary[] = useMemo(() => {
-    const list = [...liveLaps];
+    const list: LapSummary[] = [...(liveLaps.length > 0 ? liveLaps : fetchedLiveLaps)];
     if (inProgressLap && !list.some((l) => l.lap === inProgressLap.lap)) {
       list.push(inProgressLap);
     }
     return list;
-  }, [liveLaps, inProgressLap]);
+  }, [liveLaps, fetchedLiveLaps, inProgressLap]);
 
-  // Load database sessions when in database mode
+  // Load database sessions on mount and when switching to database mode
   useEffect(() => {
-    if (sourceMode !== "database") return;
     let active = true;
-    setLoadingDb(true);
-    setDbError("");
+    if (sourceMode === "database") {
+      setLoadingDb(true);
+      setDbError("");
+    }
     getStoredSessions()
       .then((data) => {
         if (!active) return;
         setDbSessions(data);
-        if (data.length > 0 && !data.some((s) => s.sessionId === selectedDbSessionId)) {
+        if (sourceMode === "database" && data.length > 0 && !data.some((s) => s.sessionId === selectedDbSessionId)) {
           setSelectedDbSessionId(data[0].sessionId);
         }
       })
       .catch((err) => {
-        if (active) setDbError(err instanceof Error ? err.message : "Failed to load sessions");
+        if (active && sourceMode === "database") {
+          setDbError(err instanceof Error ? err.message : "Failed to load sessions");
+        }
       })
       .finally(() => {
-        if (active) setLoadingDb(false);
+        if (active && sourceMode === "database") setLoadingDb(false);
       });
     return () => {
       active = false;
@@ -180,27 +196,40 @@ export default function TelemetryReplayPanel({
     }
   }, [sourceMode, currentSessionLaps, selectedLapId]);
 
-  // Synchronize activeLap object based on selectedLapId
+  // Synchronize activeLap object based on selectedLapId without interrupting playback on live refreshes
   useEffect(() => {
-    if (!selectedLapId) return;
+    if (!selectedLapId) {
+      lastLoadedKeyRef.current = "";
+      setActiveLap(null);
+      setIsPlaying(false);
+      setCurrentTimeMs(0);
+      return;
+    }
+
+    const loadKey = `${sourceMode}:${selectedLapId}`;
+    const isNewSelection = lastLoadedKeyRef.current !== loadKey;
 
     if (sourceMode === "current") {
       const match = currentSessionLaps.find((l) => (l.id || `lap-${l.lap}`) === selectedLapId);
       if (match) {
         setActiveLap(match);
-        // Default to beginning of lap or current scope
-        setCurrentTimeMs(0);
-        setIsPlaying(false);
+        if (isNewSelection) {
+          lastLoadedKeyRef.current = loadKey;
+          setCurrentTimeMs(0);
+          setIsPlaying(false);
+        }
       }
     } else {
-      // Database lap: fetch samples trace if needed
       const match = dbLaps.find((l) => l.lapId === selectedLapId);
-      if (!match) return;
+      if (!match || !isNewSelection) return;
 
+      lastLoadedKeyRef.current = loadKey;
+      let active = true;
       setLoadingTrace(true);
       fetch(`/api/laps/${encodeURIComponent(match.lapId)}/trace`)
         .then((res) => (res.ok ? res.json() : Promise.reject()))
         .then((samples: LapSample[]) => {
+          if (!active) return;
           setActiveLap({
             id: match.lapId,
             lap: match.lapNumber,
@@ -219,7 +248,7 @@ export default function TelemetryReplayPanel({
           setIsPlaying(false);
         })
         .catch(() => {
-          // If trace fetch fails, create stub
+          if (!active) return;
           setActiveLap({
             id: match.lapId,
             lap: match.lapNumber,
@@ -232,7 +261,12 @@ export default function TelemetryReplayPanel({
             samples: [],
           });
         })
-        .finally(() => setLoadingTrace(false));
+        .finally(() => {
+          if (active) setLoadingTrace(false);
+        });
+      return () => {
+        active = false;
+      };
     }
   }, [sourceMode, selectedLapId, currentSessionLaps, dbLaps]);
 
@@ -265,7 +299,21 @@ export default function TelemetryReplayPanel({
         });
       })
       .catch(() => {
-        setReplayTrackOutline(currentTrackOutline ?? null);
+        fetch(`/api/circuits/${trackId}`, { signal: controller.signal })
+          .then((r) => (r.ok ? r.json() : Promise.reject()))
+          .then((data) => {
+            if (!data || controller.signal.aborted) return;
+            setReplayTrackOutline({
+              leftEdge: (data.left_edge ?? []).map(([x, z]: number[]) => ({ x, z })),
+              rightEdge: (data.right_edge ?? []).map(([x, z]: number[]) => ({ x, z })),
+              racingLine: (data.lines?.formula1?.racing_line ?? []).map(([x, z]: number[]) => ({ x, z })),
+              orientation: Number(data.orientation ?? 0),
+              sfLine: data.sf_line,
+            });
+          })
+          .catch(() => {
+            setReplayTrackOutline(currentTrackOutline ?? null);
+          });
       });
 
     return () => controller.abort();
@@ -309,6 +357,18 @@ export default function TelemetryReplayPanel({
     else setCurrentTimeMs(0);
   };
 
+  const togglePlay = useCallback(() => {
+    if (!activeLap?.samples?.length) return;
+    if (isPlaying) {
+      setIsPlaying(false);
+    } else {
+      if (currentTimeMs >= scopeEndMs) {
+        setCurrentTimeMs(scopeStartMs);
+      }
+      setIsPlaying(true);
+    }
+  }, [activeLap, isPlaying, currentTimeMs, scopeEndMs, scopeStartMs]);
+
   // High-performance animation loop for smooth 60fps playback
   useEffect(() => {
     if (!isPlaying) return;
@@ -322,12 +382,7 @@ export default function TelemetryReplayPanel({
       setCurrentTimeMs((prev) => {
         const next = prev + dt;
         if (next >= scopeEndMs) {
-          if (isLooping) {
-            return scopeStartMs;
-          } else {
-            setIsPlaying(false);
-            return scopeEndMs;
-          }
+          return isLooping ? scopeStartMs : scopeEndMs;
         }
         return next;
       });
@@ -339,18 +394,25 @@ export default function TelemetryReplayPanel({
     return () => cancelAnimationFrame(animId);
   }, [isPlaying, playbackSpeed, isLooping, scopeStartMs, scopeEndMs]);
 
+  // Stop playback cleanly when reaching the end in non-looping mode
+  useEffect(() => {
+    if (isPlaying && !isLooping && currentTimeMs >= scopeEndMs) {
+      setIsPlaying(false);
+    }
+  }, [isPlaying, isLooping, currentTimeMs, scopeEndMs]);
+
   // Keyboard shortcut: Space to toggle play/pause
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
       if (e.code === "Space") {
         e.preventDefault();
-        setIsPlaying((v) => !v);
+        togglePlay();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [togglePlay]);
 
   // Nearest sample and index at currentTimeMs
   const sampleMatch = useMemo(() => {
@@ -389,40 +451,48 @@ export default function TelemetryReplayPanel({
 
   // Car position & orientation on track map
   const trackLength = activeLap?.trackLength ?? currentSession?.trackLength ?? 7004;
+  const trackLine = useMemo(() => {
+    if (replayTrackOutline?.racingLine && replayTrackOutline.racingLine.length >= 2) {
+      return replayTrackOutline.racingLine;
+    }
+    if (replayTrackOutline?.leftEdge && replayTrackOutline.leftEdge.length >= 2) {
+      return replayTrackOutline.leftEdge;
+    }
+    return null;
+  }, [replayTrackOutline]);
+
   const carPosition = useMemo<Position | null>(() => {
-    const line = replayTrackOutline?.racingLine;
-    if (!line || line.length < 2) return null;
+    if (!trackLine) return null;
 
     const dist = activeSample?.distance ?? 0;
     const progress = Math.max(0, Math.min(1, ((dist % trackLength) + trackLength) % trackLength / trackLength));
-    const floatIdx = progress * (line.length - 1);
+    const floatIdx = progress * (trackLine.length - 1);
     const idx = Math.floor(floatIdx);
-    const nextIdx = Math.min(line.length - 1, idx + 1);
+    const nextIdx = Math.min(trackLine.length - 1, idx + 1);
     const frac = floatIdx - idx;
 
-    const p1 = line[idx];
-    const p2 = line[nextIdx];
+    const p1 = trackLine[idx];
+    const p2 = trackLine[nextIdx];
 
     return {
       x: p1.x + (p2.x - p1.x) * frac,
       z: p1.z + (p2.z - p1.z) * frac,
     };
-  }, [replayTrackOutline, activeSample, trackLength]);
+  }, [trackLine, activeSample, trackLength]);
 
   const carHeading = useMemo<number>(() => {
-    const line = replayTrackOutline?.racingLine;
-    if (!line || line.length < 2) return 0;
+    if (!trackLine) return 0;
 
     const dist = activeSample?.distance ?? 0;
     const progress = Math.max(0, Math.min(1, ((dist % trackLength) + trackLength) % trackLength / trackLength));
-    const floatIdx = progress * (line.length - 1);
+    const floatIdx = progress * (trackLine.length - 1);
     const idx = Math.floor(floatIdx);
-    const nextIdx = Math.min(line.length - 1, idx + 1);
+    const nextIdx = Math.min(trackLine.length - 1, idx + 1);
 
-    const dx = line[nextIdx].x - line[idx].x;
-    const dz = line[nextIdx].z - line[idx].z;
+    const dx = trackLine[nextIdx].x - trackLine[idx].x;
+    const dz = trackLine[nextIdx].z - trackLine[idx].z;
     return Math.atan2(dx, dz);
-  }, [replayTrackOutline, activeSample, trackLength]);
+  }, [trackLine, activeSample, trackLength]);
 
   const replayCars: Car[] = useMemo(() => {
     if (!carPosition) return [];
@@ -480,7 +550,8 @@ export default function TelemetryReplayPanel({
       lapTime: currentTimeMs,
       lapNum: activeLap?.lap ?? 1,
       sector: currentSectorNumber - 1,
-      position: 1,
+      position: livePlayer?.position ?? 1,
+      driverNumber: livePlayer?.driverNumber,
       invalid: activeLap?.invalid ?? false,
       suggestedGear: s?.suggestedGear ?? (s?.gear ? Math.min(8, Math.max(1, s.gear + 1)) : 4),
       gLat: s?.gLat ?? (s?.steer ? Number((s.steer * 2.8).toFixed(2)) : 0.0),
@@ -690,7 +761,8 @@ export default function TelemetryReplayPanel({
             </button>
             <button
               className={`vcr-btn play-btn ${isPlaying ? "is-playing" : ""}`}
-              onClick={() => setIsPlaying((p) => !p)}
+              onClick={togglePlay}
+              disabled={!activeLap?.samples?.length}
               title={isPlaying ? "Pause (Space)" : "Play (Space)"}
             >
               {isPlaying ? "❚❚ PAUSE" : "▶ PLAY"}
@@ -858,7 +930,7 @@ export default function TelemetryReplayPanel({
               </div>
               <div className="position-large">
                 <span>POSITION</span>
-                <strong>P1</strong>
+                <strong>{isNumber(playerTelemetry?.position) ? `P${playerTelemetry.position}` : "—"}</strong>
               </div>
             </div>
 
@@ -989,9 +1061,19 @@ export default function TelemetryReplayPanel({
           </div>
           <CarStatusPanel
             player={playerTelemetry}
-            online={true}
-            retained={false}
-            paused={false}
+            freshness={{
+              telemetry: {
+                state: activeSample ? "fresh" : "missing",
+                ageSeconds: activeSample ? 0 : null,
+              },
+              damage: {
+                state: playerTelemetry?.damage || playerTelemetry?.tyres ? "fresh" : "missing",
+                ageSeconds: playerTelemetry?.damage || playerTelemetry?.tyres ? 0 : null,
+              },
+            }}
+            online={Boolean(activeSample)}
+            retained={Boolean(playerTelemetry?.damage || playerTelemetry?.tyres)}
+            paused={!isPlaying}
           />
         </article>
       </section>
