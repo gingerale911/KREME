@@ -209,3 +209,42 @@ def test_current_lap_snapshot():
     assert snapshot['lap'] == 2
     assert snapshot['inProgress'] is True
     assert len(snapshot['samples']) == 1
+
+
+def test_mid_lap_damage_change_only_affects_samples_from_that_point():
+    r = recorder()
+    # Frame 1: intact car
+    p1, t1 = pair(1, elapsed=0, distance=0)
+    d1 = make(PacketId.CAR_DAMAGE, 1)
+    d1.data['cars'][0]['frontLeftWingDamage'] = 0
+    d1.data['cars'][0]['tyresWear'] = np.array([5.0, 5.0, 5.0, 5.0], dtype=np.float32)
+    add(r, [p1, t1, d1])
+
+    # Frame 2: still intact
+    p2, t2 = pair(2, elapsed=100, distance=18)
+    add(r, [p2, t2])
+
+    # Frame 3: damage occurs (front wing hit 35%, tyre wear 12%)
+    p3, t3 = pair(3, elapsed=200, distance=36)
+    d3 = make(PacketId.CAR_DAMAGE, 3)
+    d3.data['cars'][0]['frontLeftWingDamage'] = 35
+    d3.data['cars'][0]['tyresWear'] = np.array([12.0, 5.0, 5.0, 5.0], dtype=np.float32)
+    add(r, [d3, p3, t3])
+
+    # Finish lap
+    add(r, pair(4, lap=2, last=300))
+    r.flush(force=True)
+
+    lap = r.records[-1]
+    samples = lap['samples']
+    assert len(samples) == 3
+
+    # Frame 1 & 2 before the hit have 0 wing damage
+    assert samples[0]['damage']['frontLeftWingDamage'] == 0
+    assert samples[1]['damage']['frontLeftWingDamage'] == 0
+    assert samples[0]['tyres']['wearPct'][0] == 5.0
+    assert samples[1]['tyres']['wearPct'][0] == 5.0
+
+    # Frame 3 at the hit has 35% wing damage and 12% tyre wear
+    assert samples[2]['damage']['frontLeftWingDamage'] == 35
+    assert samples[2]['tyres']['wearPct'][0] == 12.0

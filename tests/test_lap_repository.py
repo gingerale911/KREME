@@ -155,3 +155,43 @@ def test_unknown_lap_returns_none():
 
         assert repo.get_lap("unknown") is None
         assert repo.get_lap_trace("unknown") is None
+
+
+def test_lap_trace_persists_tyres_and_damage(sample_lap):
+    sample_lap["samples"][0]["damage"] = {
+        "frontLeftWingDamage": 0,
+        "frontRightWingDamage": 0,
+        "rearWingDamage": 0,
+        "floorDamage": 0,
+        "diffuserDamage": 0,
+        "sidepodDamage": 0,
+    }
+    sample_lap["samples"][0]["tyres"] = {
+        "wheelOrder": ["RL", "RR", "FL", "FR"],
+        "wearPct": [5.0, 5.0, 5.0, 5.0],
+        "damagePct": [0, 0, 0, 0],
+    }
+    sample_lap["samples"][2]["damage"] = {
+        "frontLeftWingDamage": 40,
+        "frontRightWingDamage": 0,
+        "rearWingDamage": 0,
+        "floorDamage": 0,
+        "diffuserDamage": 0,
+        "sidepodDamage": 0,
+    }
+    sample_lap["samples"][2]["tyres"] = {
+        "wheelOrder": ["RL", "RR", "FL", "FR"],
+        "wearPct": [15.0, 5.0, 5.0, 5.0],
+        "damagePct": [10, 0, 0, 0],
+    }
+
+    with LapDatabase(":memory:") as db:
+        repo = LapRepository(db)
+        lap_id = repo.save_lap(sample_lap)
+
+        trace = repo.get_lap_trace(lap_id)
+
+        assert trace[0]["damage"]["frontLeftWingDamage"] == 0
+        assert trace[0]["tyres"]["wearPct"] == [5.0, 5.0, 5.0, 5.0]
+        assert trace[2]["damage"]["frontLeftWingDamage"] == 40
+        assert trace[2]["tyres"]["wearPct"] == [15.0, 5.0, 5.0, 5.0]

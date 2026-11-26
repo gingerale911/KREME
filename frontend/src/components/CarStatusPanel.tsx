@@ -57,14 +57,15 @@ function CarDiagram({ damage, wheelValues }: { damage: Partial<Record<DamageKey,
   </svg>;
 }
 
-export default function CarStatusPanel({ player, freshness, online, retained = false, paused = false }: {
-  player?: CarStatusPlayer; freshness?: Record<string, Freshness>; online: boolean; retained?: boolean; paused?: boolean;
+export default function CarStatusPanel({ player, freshness, online, retained = false, paused = false, mode = "live" }: {
+  player?: CarStatusPlayer; freshness?: Record<string, Freshness>; online: boolean; retained?: boolean; paused?: boolean; mode?: "live" | "replay";
 }) {
-  const status = (source: string): Availability => !online ? "offline" : paused && freshness?.[source]?.state !== "missing" ? "paused" : freshness?.[source]?.state ?? "missing";
+  const isReplay = mode === "replay";
+  const status = (source: string): Availability => isReplay ? "fresh" : !online ? "offline" : paused && freshness?.[source]?.state !== "missing" ? "paused" : freshness?.[source]?.state ?? "missing";
   const telemetryState = status("telemetry");
   const damageState = status("damage");
   const tyres = player?.tyres;
-  const reading = (value: Reading, source: Availability) => (source === "fresh" || retained) && finite(value) ? value : null;
+  const reading = (value: Reading, source: Availability) => (isReplay || source === "fresh" || retained) && finite(value) ? value : null;
   const damage = Object.fromEntries(PARTS.map(p => [p.key, reading(player?.damage?.[p.key], damageState)]));
   const wheelValues = WHEELS.map(wheel => ({
     wear: reading(tyres?.wearPct?.[wheel.index], damageState),
@@ -75,13 +76,21 @@ export default function CarStatusPanel({ player, freshness, online, retained = f
     pressure: reading(tyres?.pressurePsi?.[wheel.index], telemetryState),
   }));
   return <div className="cs-panel">
-    <div className="cs-heading"><span>NUM {player?.driverNumber ?? "—"}</span><span className={`cs-availability cs-${telemetryState === "fresh" && damageState === "fresh" ? "fresh" : telemetryState === "offline" && damageState === "offline" ? "offline" : "stale"}`}>{paused ? "PAUSED" : !online ? "DISCONNECTED · RETAINED" : retained ? "STALE · RETAINED" : telemetryState === "fresh" && damageState === "fresh" ? "LIVE" : "PARTIAL / STALE"}</span></div>
+    <div className="cs-heading">
+      <span>NUM {player?.driverNumber ?? "—"}</span>
+      <span className={`cs-availability ${isReplay ? "cs-replay" : `cs-${telemetryState === "fresh" && damageState === "fresh" ? "fresh" : telemetryState === "offline" && damageState === "offline" ? "offline" : "stale"}`}`}>
+        {isReplay ? "REPLAY" : paused ? "PAUSED" : !online ? "DISCONNECTED · RETAINED" : retained ? "STALE · RETAINED" : telemetryState === "fresh" && damageState === "fresh" ? "LIVE" : "PARTIAL / STALE"}
+      </span>
+    </div>
     <div className="cs-stage cs-stage-all">
       <span className="cs-front">↑ FRONT</span>
       <CarDiagram damage={damage} wheelValues={wheelValues.map(w => w.damage)} />
       {WHEELS.map((wheel, i) => <div key={wheel.label} className={`cs-tyre-gauge cs-gauge-${wheel.label.toLowerCase()}`} style={{ borderColor: damageColor(wheelValues[i].wear, true) }} title={`${wheel.label}: ${format(wheelValues[i].wear, "% wear")} · ${format(wheelValues[i].damage, "% physical damage")}`}><small>{wheel.label}</small><strong>{format(finite(wheelValues[i].wear) ? 100 - Math.min(100, Math.max(0, wheelValues[i].wear!)) : null, "%")}</strong><small>HEALTH</small></div>)}
     </div>
-    <div className="cs-sources" role="status"><span>TELEMETRY <b className={`cs-${telemetryState}`}>{telemetryState.toUpperCase()}</b></span><span>DAMAGE <b className={`cs-${damageState}`}>{damageState.toUpperCase()}</b></span></div>
+    <div className="cs-sources" role="status">
+      <span>TELEMETRY <b className={isReplay ? "cs-replay" : `cs-${telemetryState}`}>{isReplay ? "REPLAY" : telemetryState.toUpperCase()}</b></span>
+      <span>DAMAGE <b className={isReplay ? "cs-replay" : `cs-${damageState}`}>{isReplay ? "REPLAY" : damageState.toUpperCase()}</b></span>
+    </div>
     <div className="cs-caption">ALL TYRE METRICS · Wear and damage in % · temperatures in °C · pressure in psi</div>
     <div className="cs-legend">Wings: 0–1 green · 2–49 yellow · 50–99 orange · 100 red<br />Tyres: 0–49 green · 50–74 yellow · 75–99 orange · 100 red</div>
     <div className="cs-note">Circles: remaining tyre health (100 − wear). Car: physical damage. Grey: unavailable.</div>

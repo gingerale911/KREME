@@ -119,6 +119,8 @@ export interface LapSample {
   gLat?: MaybeNumber;
   gLong?: MaybeNumber;
   sessionTime?: MaybeNumber;
+  tyres?: Player["tyres"] | null;
+  damage?: Player["damage"] | null;
 }
 
 export interface LapSummary {

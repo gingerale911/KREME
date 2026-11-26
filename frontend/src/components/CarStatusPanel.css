@@ -2,6 +2,7 @@
 .cs-heading { display: flex; justify-content: space-between; align-items: center; font: 700 13px "DM Mono", monospace; letter-spacing: .08em; margin-bottom: 14px; }
 .cs-availability { padding: 5px 9px; border: 1px solid currentColor; border-radius: 5px; font-size: 10px; }
 .cs-fresh { color: #67dba0; }
+.cs-replay { color: #60c5f6; }
 .cs-stale { color: #f0bc60; }
 .cs-missing, .cs-offline { color: #91a0b1; }
 .cs-stage { position: relative; height: 500px; margin-top: 12px; border: 1px solid var(--line); border-radius: 7px; background: radial-gradient(ellipse at center, #60f6a309, transparent 66%); }

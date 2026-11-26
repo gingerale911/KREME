@@ -107,6 +107,8 @@ interface LapSample {
   throttle?: MaybeNumber;
   brake?: MaybeNumber;
   speed?: MaybeNumber;
+  tyres?: Player["tyres"] | null;
+  damage?: Player["damage"] | null;
 }
 
 interface LapSummary {

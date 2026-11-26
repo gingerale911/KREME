@@ -292,3 +292,37 @@ def test_current_lap_returns_samples_when_active(repository):
     assert len(data["samples"]) > 0
     assert "speed" in data["samples"][0]
     assert "throttle" in data["samples"][0]
+
+
+def test_lap_history_includes_samples_for_replay(repository):
+    """The replay panel loads completed laps from /api/laps, not the WS frame."""
+    from tests.test_lap_recorder import make, pair
+    from krem.core import PacketId
+
+    live_state = LiveState()
+    session = make(PacketId.SESSION, 0)
+    session.data["trackId"] = 10
+    session.data["trackLength"] = 7000
+    live_state.update(session)
+
+    for i in range(6):
+        p, t = pair(i + 1, lap=1, elapsed=i * 100, distance=i * 18)
+        live_state.update(p)
+        live_state.update(t)
+
+    p, t = pair(7, lap=2, elapsed=0, distance=0, last=600)
+    live_state.update(p)
+    live_state.update(t)
+    live_state.lap_recorder.flush(force=True)
+
+    app = create_app(live_state, lap_repository=repository)
+    client = TestClient(app)
+
+    response = client.get("/api/laps")
+    assert response.status_code == 200
+    laps = response.json()
+    assert len(laps) == 1
+    assert laps[0]["lap"] == 1
+    assert laps[0]["lapTimeMs"] == 600
+    assert len(laps[0]["samples"]) == 6
+    assert laps[0]["samples"][0]["speed"] == 180

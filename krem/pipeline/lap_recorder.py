@@ -12,7 +12,7 @@ import math
 import time
 from typing import Any
 
-from krem.core import PacketId
+from krem.core import PacketId, TYRE_COMPOUND_NAMES, TYRE_VISUAL_NAMES
 from krem.ingest import DecodedPacket
 
 
@@ -47,6 +47,8 @@ class LapRecorder:
         self.last_time: float | None = None
         self.history_packet: DecodedPacket | None = None
         self.last_event_frame = -1
+        self.latest_damage: DecodedPacket | None = None
+        self.latest_status: DecodedPacket | None = None
 
         # Optional background persistence writer.
         self.storage_writer = None
@@ -66,6 +68,8 @@ class LapRecorder:
         self.current = None
         self.last_time = None
         self.history_packet = None
+        self.latest_damage = None
+        self.latest_status = None
 
     def ingest(self, packet: DecodedPacket) -> None:
         h = packet.header
@@ -97,7 +101,12 @@ class LapRecorder:
                 self.history_packet = packet
                 self._apply_history()
 
-        elif pid in (PacketId.LAP_DATA, PacketId.CAR_TELEMETRY):
+        elif pid in (
+            PacketId.LAP_DATA,
+            PacketId.CAR_TELEMETRY,
+            PacketId.CAR_DAMAGE,
+            PacketId.CAR_STATUS,
+        ):
             if not 0 <= identity[1] < len(packet.data["cars"]):
                 return
 
@@ -107,7 +116,7 @@ class LapRecorder:
             entry = self.pending.setdefault(
                 frame, {"received": time.monotonic()}
             )
-            entry.setdefault(pid, packet)
+            entry[pid] = packet
             self.high_frame = max(self.high_frame, frame)
             self.flush()
 
@@ -130,9 +139,19 @@ class LapRecorder:
             self.pending.pop(frame)
             self.processed_frame = frame
 
+            if PacketId.CAR_DAMAGE in entry:
+                self.latest_damage = entry[PacketId.CAR_DAMAGE]
+            if PacketId.CAR_STATUS in entry:
+                self.latest_status = entry[PacketId.CAR_STATUS]
+
             lap = entry.get(PacketId.LAP_DATA)
             if lap is not None:
-                self._consume(lap, entry.get(PacketId.CAR_TELEMETRY))
+                self._consume(
+                    lap,
+                    entry.get(PacketId.CAR_TELEMETRY),
+                    self.latest_damage,
+                    self.latest_status,
+                )
 
         self._apply_history()
 
@@ -140,6 +159,8 @@ class LapRecorder:
         self,
         packet: DecodedPacket,
         telemetry: DecodedPacket | None,
+        damage: DecodedPacket | None = None,
+        status: DecodedPacket | None = None,
     ) -> None:
         h = packet.header
         car = packet.data["cars"][h.player_car_index]
@@ -252,6 +273,7 @@ class LapRecorder:
 
         speed = throttle = brake = None
         steer = gear = rpm = drs = None
+        tyres_surface = tyres_inner = tyres_pressure = brakes_temp = None
 
         if aligned:
             values = telemetry.data["cars"][h.player_car_index]
@@ -286,9 +308,73 @@ class LapRecorder:
                 drs = int(values["drs"])
             except Exception:
                 pass
+            try:
+                tyres_surface = [int(v) for v in values["tyresSurfaceTemperature"]]
+            except Exception:
+                pass
+            try:
+                tyres_inner = [int(v) for v in values["tyresInnerTemperature"]]
+            except Exception:
+                pass
+            try:
+                tyres_pressure = [round(float(v), 2) for v in values["tyresPressure"]]
+            except Exception:
+                pass
+            try:
+                brakes_temp = [int(v) for v in values["brakesTemperature"]]
+            except Exception:
+                pass
 
         if speed is None:
             current["reasons"].add("missing_telemetry")
+
+        damage_dict = None
+        tyres_wear = None
+        tyres_dmg = None
+
+        if damage is not None and 0 <= h.player_car_index < len(damage.data["cars"]):
+            car_dmg = damage.data["cars"][h.player_car_index]
+            try:
+                damage_dict = {
+                    "frontLeftWingDamage": int(car_dmg["frontLeftWingDamage"]),
+                    "frontRightWingDamage": int(car_dmg["frontRightWingDamage"]),
+                    "rearWingDamage": int(car_dmg["rearWingDamage"]),
+                    "floorDamage": int(car_dmg["floorDamage"]),
+                    "diffuserDamage": int(car_dmg["diffuserDamage"]),
+                    "sidepodDamage": int(car_dmg["sidepodDamage"]),
+                }
+                tyres_wear = [round(float(v), 1) for v in car_dmg["tyresWear"]]
+                tyres_dmg = [int(v) for v in car_dmg["tyresDamage"]]
+            except Exception:
+                pass
+
+        actual_compound = visual_compound = age_laps = None
+        actual_name = visual_name = None
+        if status is not None and 0 <= h.player_car_index < len(status.data["cars"]):
+            st_car = status.data["cars"][h.player_car_index]
+            try:
+                actual_compound = int(st_car["actualTyreCompound"])
+                actual_name = TYRE_COMPOUND_NAMES.get(actual_compound)
+                visual_compound = int(st_car["visualTyreCompound"])
+                visual_name = TYRE_VISUAL_NAMES.get(visual_compound)
+                age_laps = int(st_car["tyresAgeLaps"])
+            except Exception:
+                pass
+
+        tyres_dict = {
+            "wheelOrder": ["RL", "RR", "FL", "FR"],
+            "wearPct": tyres_wear,
+            "damagePct": tyres_dmg,
+            "surfaceTempC": tyres_surface,
+            "innerTempC": tyres_inner,
+            "pressurePsi": tyres_pressure,
+            "brakeTempC": brakes_temp,
+            "actualCompound": actual_compound,
+            "actualCompoundName": actual_name,
+            "visualCompound": visual_compound,
+            "visualCompoundName": visual_name,
+            "ageLaps": age_laps,
+        } if (damage is not None or aligned or status is not None) else None
 
         samples.append({
             "elapsedTimeMs": elapsed,
@@ -310,6 +396,8 @@ class LapRecorder:
             "playerCarIndex": int(h.player_car_index),
             "lap": lap_num,
             "gapBefore": gap,
+            "tyres": tyres_dict,
+            "damage": damage_dict,
         })
 
     def _finish(

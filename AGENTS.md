@@ -235,3 +235,18 @@ KREM/
 - Restored turn cards and stacking fixes, independent damage ranges, and tyre health (100 minus wear).
 - Restored sector clocks, previous-lap/upcoming-sector selection, deterministic pace grades, repeated-timestamp handling and constant-input observations. Missing recordings remain explicit; Gemini cannot replace missing evidence with generic driving instructions.
 - Verification: 176 backend tests, 4 frontend tests and the production build passed. Runtime restart remains necessary to load backend code.
+
+## Telemetry Replay fix — 2026-11-26
+- Fixed the Telemetry Replay tab showing no completed laps. The 30 Hz WebSocket deliberately omits `laps` for performance, so `snapshot.laps` was always empty; the panel now loads completed current-session laps (with samples) from `/api/laps` and merges them with the in-progress lap.
+- Stopped the 4-second in-progress-lap poll from resetting the playhead and pausing playback. Playback now resets only when the selected lap or source actually changes; database trace fetches are also guarded against stale responses.
+- Added a regression test proving `/api/laps` returns completed laps with samples for replay.
+- Validation: 181 backend tests passed; TypeScript/Vite production build passed. Browser/live-game validation remains pending.
+
+## Replay Car Health synchronization — 2026-11-26
+- Fixed Telemetry Replay displaying the live car's current health instead of the replay's health.
+- `LapRecorder` now ingests `PacketId.CAR_DAMAGE` and `PacketId.CAR_STATUS` packets in chronological order along with `LAP_DATA` and `CAR_TELEMETRY`, recording per-sample tyre metrics (wear, damage, surface/inner/brake temps, pressure, compound) and wing/floor/diffuser/sidepod damage.
+- Updated DuckDB `lap_samples` schema and repository to store and load per-sample `tyres` and `damage` JSON payloads with backward compatibility for legacy traces.
+- `TelemetryReplayPanel` now derives car health directly from the active replay sample (`activeSample.damage` and `activeSample.tyres`) instead of `livePlayer`. As the replay scrubber moves or plays, car health and damage reflect only the state at that exact timestamp.
+- Updated `CarStatusPanel` with a `mode="replay"` prop to display fresh replay availability chips (`REPLAY` badge and active sources) without requiring live UDP freshness packets.
+- Added regression tests verifying that mid-lap damage events only affect samples from the exact point of damage onwards, and that persistent DuckDB traces preserve sample tyres and damage.
+- Validation: 183 backend tests passed; TypeScript/Vite production build passed.

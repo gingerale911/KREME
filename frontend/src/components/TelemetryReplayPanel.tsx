@@ -72,13 +72,15 @@ export default function TelemetryReplayPanel({
   const [inProgressLap, setInProgressLap] = useState<LapSummary | null>(null);
   const [fetchedLiveLaps, setFetchedLiveLaps] = useState<LapSummary[]>([]);
 
+  // Completed laps for the current session. The live WebSocket snapshot omits
+  // lap sample arrays for performance, so replay must load them from the
+  // history API instead of relying on snapshot.laps.
+  const [historyLaps, setHistoryLaps] = useState<LapSummary[]>([]);
+
   // Available laps list for replay
   const [selectedLapId, setSelectedLapId] = useState<string>("");
   const [activeLap, setActiveLap] = useState<LapSummary | null>(null);
   const [loadingTrace, setLoadingTrace] = useState(false);
-
-  // Track which (sourceMode, selectedLapId) was last initialized so periodic refreshes don't reset playback
-  const lastLoadedKeyRef = useRef<string>("");
 
   // Track outline state (if replaying another track)
   const [replayTrackOutline, setReplayTrackOutline] = useState<TrackOutline | null>(null);
@@ -93,6 +95,11 @@ export default function TelemetryReplayPanel({
   // Scrubber dragging state
   const scrubberRef = useRef<HTMLDivElement>(null);
   const isDraggingScrubber = useRef(false);
+
+  // Track which selection has already been loaded so background refreshes do
+  // not reset the playhead or pause playback.
+  const loadedSelectionRef = useRef<string>("");
+  const traceRequestRef = useRef(0);
 
   // 1. Fetch live completed laps + current in-progress lap on mount / interval
   const refreshCurrentLap = useCallback(() => {
@@ -123,14 +130,48 @@ export default function TelemetryReplayPanel({
     return () => window.clearInterval(interval);
   }, [refreshCurrentLap]);
 
-  // Combine live recorded laps + in-progress lap
+  // Completed-lap history loader.
+  const refreshHistory = useCallback(() => {
+    fetch("/api/laps")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((laps) => {
+        if (Array.isArray(laps)) setHistoryLaps(laps);
+      })
+      .catch(() => {
+        // Keep the previous history if the endpoint is temporarily unavailable.
+      });
+  }, []);
+
+  // Load completed current-session laps from the in-memory history API. The
+  // in-progress lap number is included because a change means the previous lap
+  // just finished and should become selectable immediately.
+  useEffect(() => {
+    refreshHistory();
+  }, [refreshHistory, currentSession?.uid, currentSession?.trackId, inProgressLap?.lap]);
+
+  // Combine completed laps from every available source plus the in-progress
+  // lap, deduplicated by lap number.
   const currentSessionLaps: LapSummary[] = useMemo(() => {
-    const list: LapSummary[] = [...(liveLaps.length > 0 ? liveLaps : fetchedLiveLaps)];
-    if (inProgressLap && !list.some((l) => l.lap === inProgressLap.lap)) {
-      list.push(inProgressLap);
-    }
-    return list;
-  }, [liveLaps, fetchedLiveLaps, inProgressLap]);
+    const byLap = new Map<number, LapSummary>();
+
+    const add = (lap: LapSummary) => {
+      const lapNumber = Number(lap.lap);
+      if (!Number.isFinite(lapNumber)) return;
+      const existing = byLap.get(lapNumber);
+      if (!existing || lap.inProgress || !existing.inProgress) {
+        byLap.set(lapNumber, lap);
+      }
+    };
+
+    liveLaps.forEach(add);
+    fetchedLiveLaps.forEach(add);
+    historyLaps.forEach(add);
+    if (inProgressLap) add(inProgressLap);
+
+    return Array.from(byLap.values()).sort(
+      (a, b) => Number(a.lap) - Number(b.lap),
+    );
+  }, [liveLaps, fetchedLiveLaps, historyLaps, inProgressLap]);
 
   // Load database sessions on mount and when switching to database mode
   useEffect(() => {
@@ -199,75 +240,93 @@ export default function TelemetryReplayPanel({
   // Synchronize activeLap object based on selectedLapId without interrupting playback on live refreshes
   useEffect(() => {
     if (!selectedLapId) {
-      lastLoadedKeyRef.current = "";
+      loadedSelectionRef.current = "";
       setActiveLap(null);
       setIsPlaying(false);
       setCurrentTimeMs(0);
       return;
     }
 
-    const loadKey = `${sourceMode}:${selectedLapId}`;
-    const isNewSelection = lastLoadedKeyRef.current !== loadKey;
+    const selectionKey = `${sourceMode}:${selectedLapId}`;
+    const selectionChanged = loadedSelectionRef.current !== selectionKey;
 
     if (sourceMode === "current") {
-      const match = currentSessionLaps.find((l) => (l.id || `lap-${l.lap}`) === selectedLapId);
-      if (match) {
-        setActiveLap(match);
-        if (isNewSelection) {
-          lastLoadedKeyRef.current = loadKey;
-          setCurrentTimeMs(0);
-          setIsPlaying(false);
-        }
-      }
-    } else {
-      const match = dbLaps.find((l) => l.lapId === selectedLapId);
-      if (!match || !isNewSelection) return;
+      // Cancel any database trace request that is still in flight.
+      traceRequestRef.current += 1;
+      setLoadingTrace(false);
 
-      lastLoadedKeyRef.current = loadKey;
-      let active = true;
-      setLoadingTrace(true);
-      fetch(`/api/laps/${encodeURIComponent(match.lapId)}/trace`)
-        .then((res) => (res.ok ? res.json() : Promise.reject()))
-        .then((samples: LapSample[]) => {
-          if (!active) return;
-          setActiveLap({
-            id: match.lapId,
-            lap: match.lapNumber,
-            lapTimeMs: match.lapTimeMs,
-            sector1TimeMs: match.sector1TimeMs,
-            sector2TimeMs: match.sector2TimeMs,
-            sector3TimeMs: match.sector3TimeMs,
-            trackId: match.trackId,
-            trackLength: match.trackLength,
-            invalid: match.invalid,
-            partial: match.partial,
-            qualityReasons: match.qualityReasons,
-            samples,
-          });
-          setCurrentTimeMs(0);
-          setIsPlaying(false);
-        })
-        .catch(() => {
-          if (!active) return;
-          setActiveLap({
-            id: match.lapId,
-            lap: match.lapNumber,
-            lapTimeMs: match.lapTimeMs,
-            sector1TimeMs: match.sector1TimeMs,
-            sector2TimeMs: match.sector2TimeMs,
-            sector3TimeMs: match.sector3TimeMs,
-            trackId: match.trackId,
-            trackLength: match.trackLength,
-            samples: [],
-          });
-        })
-        .finally(() => {
-          if (active) setLoadingTrace(false);
-        });
-      return () => {
-        active = false;
-      };
+      const match = currentSessionLaps.find((l) => (l.id || `lap-${l.lap}`) === selectedLapId);
+      if (!match) return;
+
+      setActiveLap((previous) => {
+        if (
+          previous &&
+          previous.id === match.id &&
+          previous.samples === match.samples
+        ) {
+          return previous;
+        }
+        return match;
+      });
+
+      if (selectionChanged) {
+        loadedSelectionRef.current = selectionKey;
+        // Default to beginning of lap or current scope
+        setCurrentTimeMs(0);
+        setIsPlaying(false);
+      }
+      return;
     }
+
+    // Database lap: fetch the samples trace only when the selection changes.
+    const match = dbLaps.find((l) => l.lapId === selectedLapId);
+    if (!match || !selectionChanged) return;
+
+    loadedSelectionRef.current = selectionKey;
+    const requestId = ++traceRequestRef.current;
+
+    setLoadingTrace(true);
+    fetch(`/api/laps/${encodeURIComponent(match.lapId)}/trace`)
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((samples: LapSample[]) => {
+        if (traceRequestRef.current !== requestId) return;
+        setActiveLap({
+          id: match.lapId,
+          lap: match.lapNumber,
+          lapTimeMs: match.lapTimeMs,
+          sector1TimeMs: match.sector1TimeMs,
+          sector2TimeMs: match.sector2TimeMs,
+          sector3TimeMs: match.sector3TimeMs,
+          trackId: match.trackId,
+          trackLength: match.trackLength,
+          invalid: match.invalid,
+          partial: match.partial,
+          qualityReasons: match.qualityReasons,
+          samples,
+        });
+        setCurrentTimeMs(0);
+        setIsPlaying(false);
+      })
+      .catch(() => {
+        if (traceRequestRef.current !== requestId) return;
+        // If trace fetch fails, create stub
+        setActiveLap({
+          id: match.lapId,
+          lap: match.lapNumber,
+          lapTimeMs: match.lapTimeMs,
+          sector1TimeMs: match.sector1TimeMs,
+          sector2TimeMs: match.sector2TimeMs,
+          sector3TimeMs: match.sector3TimeMs,
+          trackId: match.trackId,
+          trackLength: match.trackLength,
+          samples: [],
+        });
+        setCurrentTimeMs(0);
+        setIsPlaying(false);
+      })
+      .finally(() => {
+        if (traceRequestRef.current === requestId) setLoadingTrace(false);
+      });
   }, [sourceMode, selectedLapId, currentSessionLaps, dbLaps]);
 
   // Load track outline for active lap trackId if different from live session
@@ -537,6 +596,36 @@ export default function TelemetryReplayPanel({
   // Simulated player state for 3-panel dashboard telemetry
   const playerTelemetry: Player = useMemo(() => {
     const s = activeSample;
+    const sampleTyres = s?.tyres;
+    const sampleDamage = s?.damage;
+
+    // Use the replay sample's exact damage at this point in time. If the sample
+    // came from a legacy recording without health metrics, default to an intact car
+    // rather than substituting live car health.
+    const resolvedDamage = sampleDamage ?? (s ? {
+      frontLeftWingDamage: 0,
+      frontRightWingDamage: 0,
+      rearWingDamage: 0,
+      floorDamage: 0,
+      diffuserDamage: 0,
+      sidepodDamage: 0,
+    } : undefined);
+
+    const resolvedTyres = sampleTyres ?? (s ? {
+      wheelOrder: ["RL", "RR", "FL", "FR"],
+      wearPct: [0, 0, 0, 0],
+      damagePct: [0, 0, 0, 0],
+      surfaceTempC: [100, 100, 100, 100],
+      innerTempC: [100, 100, 100, 100],
+      pressurePsi: [23.5, 23.5, 24.0, 24.0],
+      brakeTempC: [350, 350, 450, 450],
+      actualCompound: 16,
+      actualCompoundName: "Soft",
+      visualCompound: 16,
+      visualCompoundName: "Soft",
+      ageLaps: activeLap?.lap ?? 1,
+    } : undefined);
+
     return {
       speed: s?.speed ?? 0,
       throttle: s?.throttle ?? 0,
@@ -560,12 +649,12 @@ export default function TelemetryReplayPanel({
       ersMode: 2,
       fuel: 48.5,
       fuelLaps: 22.4,
-      tyreCompound: "Soft",
-      tyreAge: activeLap?.lap ?? 1,
-      tyres: livePlayer?.tyres,
-      damage: livePlayer?.damage,
+      tyreCompound: resolvedTyres?.actualCompoundName ?? resolvedTyres?.visualCompoundName ?? "Soft",
+      tyreAge: resolvedTyres?.ageLaps ?? activeLap?.lap ?? 1,
+      tyres: resolvedTyres,
+      damage: resolvedDamage,
     };
-  }, [activeSample, currentTimeMs, activeLap, currentSectorNumber, livePlayer]);
+  }, [activeSample, currentTimeMs, activeLap, currentSectorNumber]);
 
   // Scrubber mouse drag / seek logic
   const handleSeekFromEvent = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1061,19 +1150,10 @@ export default function TelemetryReplayPanel({
           </div>
           <CarStatusPanel
             player={playerTelemetry}
-            freshness={{
-              telemetry: {
-                state: activeSample ? "fresh" : "missing",
-                ageSeconds: activeSample ? 0 : null,
-              },
-              damage: {
-                state: playerTelemetry?.damage || playerTelemetry?.tyres ? "fresh" : "missing",
-                ageSeconds: playerTelemetry?.damage || playerTelemetry?.tyres ? 0 : null,
-              },
-            }}
-            online={Boolean(activeSample)}
-            retained={Boolean(playerTelemetry?.damage || playerTelemetry?.tyres)}
-            paused={!isPlaying}
+            online={true}
+            retained={false}
+            paused={false}
+            mode="replay"
           />
         </article>
       </section>

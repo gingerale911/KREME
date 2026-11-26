@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS lap_samples (
     overall_frame_id BIGINT,
     session_time DOUBLE,
     gap_before BOOLEAN NOT NULL DEFAULT FALSE,
+    tyres_json VARCHAR,
+    damage_json VARCHAR,
     PRIMARY KEY (lap_id, sample_index)
 );
 
@@ -91,6 +93,11 @@ class LapDatabase:
         with self._lock:
             self._ensure_open()
             self.connection.execute(SCHEMA)
+            for col in ("tyres_json VARCHAR", "damage_json VARCHAR"):
+                try:
+                    self.connection.execute(f"ALTER TABLE lap_samples ADD COLUMN {col}")
+                except Exception:
+                    pass
 
     def execute(self, query: str, parameters=None):
         """Execute a query while holding the connection lock."""

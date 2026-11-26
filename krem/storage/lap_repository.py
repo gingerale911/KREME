@@ -198,6 +198,8 @@ class LapRepository:
                     sample_rows = []
 
                     for index, sample in enumerate(samples):
+                        tyres_val = sample.get("tyres")
+                        damage_val = sample.get("damage")
                         sample_rows.append((
                             lap_id,
                             index,
@@ -208,11 +210,13 @@ class LapRepository:
                             _finite_number(sample.get("speed")),
                             _finite_number(sample.get("throttle")),
                             _finite_number(sample.get("brake")),
-                            _finite_number(sample.get("steering")),
+                            _finite_number(sample.get("steering", sample.get("steer"))),
                             _integer(sample.get("frameId")),
                             _integer(sample.get("overallFrameId")),
                             _finite_number(sample.get("sessionTime")),
                             bool(sample.get("gapBefore", False)),
+                            json.dumps(tyres_val) if tyres_val is not None else None,
+                            json.dumps(damage_val) if damage_val is not None else None,
                         ))
 
                     connection.executemany(
@@ -229,9 +233,11 @@ class LapRepository:
                             frame_id,
                             overall_frame_id,
                             session_time,
-                            gap_before
+                            gap_before,
+                            tyres_json,
+                            damage_json
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         sample_rows,
                     )
@@ -432,7 +438,9 @@ class LapRepository:
                 frame_id,
                 overall_frame_id,
                 session_time,
-                gap_before
+                gap_before,
+                tyres_json,
+                damage_json
             FROM lap_samples
             WHERE lap_id = ?
             ORDER BY sample_index ASC
@@ -452,6 +460,23 @@ class LapRepository:
             "overallFrameId",
             "sessionTime",
             "gapBefore",
+            "tyresJson",
+            "damageJson",
         ]
 
-        return [dict(zip(keys, row)) for row in rows]
+        results = []
+        for row in rows:
+            d = dict(zip(keys, row))
+            tyres_raw = d.pop("tyresJson", None)
+            damage_raw = d.pop("damageJson", None)
+            try:
+                d["tyres"] = json.loads(tyres_raw) if tyres_raw else None
+            except Exception:
+                d["tyres"] = None
+            try:
+                d["damage"] = json.loads(damage_raw) if damage_raw else None
+            except Exception:
+                d["damage"] = None
+            results.append(d)
+
+        return results
