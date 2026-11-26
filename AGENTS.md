@@ -250,3 +250,18 @@ KREM/
 - Updated `CarStatusPanel` with a `mode="replay"` prop to display fresh replay availability chips (`REPLAY` badge and active sources) without requiring live UDP freshness packets.
 - Added regression tests verifying that mid-lap damage events only affect samples from the exact point of damage onwards, and that persistent DuckDB traces preserve sample tyres and damage.
 - Validation: 183 backend tests passed; TypeScript/Vite production build passed.
+
+
+## Received payload counter — 2026-11-26
+- Exposed the existing lock-protected `PacketStats.bytes_received` total as
+  `bytesReceived` in stats snapshots; counts every incoming UDP payload before
+  validation, including rejected datagrams. No extra per-packet processing.
+- Added DATA RECEIVED to the shared dashboard footer, with decimal KB/MB/GB,
+  one decimal place, missing-value handling and a scope tooltip. Fixed the
+  mobile footer selector so the nested counter remains visible.
+- Total is process-lifetime, survives game-session changes/browser refreshes,
+  and resets with the backend. Network headers/outbound traffic excluded;
+  offline replay does not add to incoming network bytes.
+- Added backend accounting and frontend unit-boundary regression coverage.
+- Validation: 189 backend tests, 6 frontend checks, TypeScript/Vite build passed.
+  Live-game validation was not performed for this update.

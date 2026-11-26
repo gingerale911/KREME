@@ -104,6 +104,7 @@ class PacketStats:
             return {
                 "connected": age is not None and age <= 2.0,
                 "packetsReceived": self.total_received,
+                "bytesReceived": self.bytes_received,
                 "packetsAccepted": self.total_accepted,
                 "packetsRejected": self.total_rejected,
                 "rejectReasons": dict(self.reject_reasons),

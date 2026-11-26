@@ -1,3 +1,4 @@
+import { formatDataReceived } from "./dataReceived";
 import CarStatusPanel from "./components/CarStatusPanel";
 import LapComparePanel from "./components/LapComparePanel";
 import TelemetryReplayPanel from "./components/TelemetryReplayPanel";
@@ -11,6 +12,7 @@ interface Stats {
   connected?: boolean;
   packetsPerSecond?: MaybeNumber;
   packetsReceived?: MaybeNumber;
+  bytesReceived?: MaybeNumber;
   packetsAccepted?: MaybeNumber;
   packetsRejected?: MaybeNumber;
   frameGaps?: MaybeNumber;
@@ -897,7 +899,7 @@ function App() {
 
       <footer className="footer">
         <span>KREM <i>·</i> LIVE TELEMETRY</span>
-        <span>PACKETS {displayNumber(stats?.packetsReceived)} <i>·</i> ACCEPTED {displayNumber(stats?.packetsAccepted)} <i>·</i> REJECTED {displayNumber(stats?.packetsRejected)}</span>
+        <span>PACKETS {displayNumber(stats?.packetsReceived)} <i>·</i> ACCEPTED {displayNumber(stats?.packetsAccepted)} <i>·</i> REJECTED {displayNumber(stats?.packetsRejected)} <i>·</i> <span title="Total incoming UDP payload, including rejected packets, since backend start. Decimal KB/MB/GB; excludes network headers.">DATA RECEIVED {formatDataReceived(stats?.bytesReceived)}</span></span>
         <span>{lastMessageAt ? `UPDATED ${new Date(lastMessageAt).toLocaleTimeString()}` : "WAITING FOR DATA"}</span>
       </footer>
       {coachOpen && <div className="coach-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCoachOpen(false); }} role="presentation">
