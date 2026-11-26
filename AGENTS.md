@@ -220,33 +220,26 @@ KREM/
 - Validation: 156 backend tests passed and the frontend production build passed.
 - Live-game validation remains pending.
 
-## Live race responsiveness update — 2026-11-06
+## Corner coach replacement — 2026-11-26
 
-- Live WebSocket and player/session reads now omit lap sample conversion at the source; completed history stays available through history APIs. Previously every 30 Hz update walked all stored samples before removing them.
-- Moved blocking storage, comparison and coach routes into FastAPI workers. Serialized optional circuit-engine access and singleton initialization for concurrent requests. Saved laps remain intact; no database migration or deletion.
-- Live map now loads only the current circuit from static JSON, independently updates from motion packets, retains circuit identity across delayed session packets, and adds colored cars, YOU marker, recent trail and start/finish label.
-- Fixed chart sampling at fixed game time on the starting grid and after flashbacks. Repeated samples and explicit paused/stale feeds do not extend traces.
-- Audited every Player values source with changing synthetic packets and the recorded race. Corrected joules-to-MJ display, compound names and unavailable suggested gear. Retained readings have per-source LIVE/LAST RECEIVED/UNAVAILABLE labels.
-- Validation: 163 backend tests; 3 frontend sampling tests; TypeScript/Vite build; browser replay verified map, values and rendered traces. Recorded-capture snapshot average improved from about 24 ms to 0.43 ms (snapshot computation only, not end-to-end game latency).
-- Restart the existing backend and refresh the dashboard to load these changes. No fresh live-game latency measurement was performed.
-
-## Restored dashboard edits — 2026-11-06
-- Recovered the compact race layout, larger map, right-side car health, lap comparison layout, glowing AI button and dismissible analysis overlay from saved edit records.
-- Restored turn cards and stacking fixes, independent damage ranges, and tyre health (100 minus wear).
-- Restored sector clocks, previous-lap/upcoming-sector selection, deterministic pace grades, repeated-timestamp handling and constant-input observations. Missing recordings remain explicit; Gemini cannot replace missing evidence with generic driving instructions.
-- Verification: 176 backend tests, 4 frontend tests and the production build passed. Runtime restart remains necessary to load backend code.
-
-## Telemetry Replay fix — 2026-11-26
-- Fixed the Telemetry Replay tab showing no completed laps. The 30 Hz WebSocket deliberately omits `laps` for performance, so `snapshot.laps` was always empty; the panel now loads completed current-session laps (with samples) from `/api/laps` and merges them with the in-progress lap.
-- Stopped the 4-second in-progress-lap poll from resetting the playhead and pausing playback. Playback now resets only when the selected lap or source actually changes; database trace fetches are also guarded against stale responses.
-- Added a regression test proving `/api/laps` returns completed laps with samples for replay.
-- Validation: 181 backend tests passed; TypeScript/Vite production build passed. Browser/live-game validation remains pending.
-
-## Replay Car Health synchronization — 2026-11-26
-- Fixed Telemetry Replay displaying the live car's current health instead of the replay's health.
-- `LapRecorder` now ingests `PacketId.CAR_DAMAGE` and `PacketId.CAR_STATUS` packets in chronological order along with `LAP_DATA` and `CAR_TELEMETRY`, recording per-sample tyre metrics (wear, damage, surface/inner/brake temps, pressure, compound) and wing/floor/diffuser/sidepod damage.
-- Updated DuckDB `lap_samples` schema and repository to store and load per-sample `tyres` and `damage` JSON payloads with backward compatibility for legacy traces.
-- `TelemetryReplayPanel` now derives car health directly from the active replay sample (`activeSample.damage` and `activeSample.tyres`) instead of `livePlayer`. As the replay scrubber moves or plays, car health and damage reflect only the state at that exact timestamp.
-- Updated `CarStatusPanel` with a `mode="replay"` prop to display fresh replay availability chips (`REPLAY` badge and active sources) without requiring live UDP freshness packets.
-- Added regression tests verifying that mid-lap damage events only affect samples from the exact point of damage onwards, and that persistent DuckDB traces preserve sample tyres and damage.
-- Validation: 183 backend tests passed; TypeScript/Vite production build passed.
+- Replaced minimum/apex-speed and estimated-time-loss analysis with speed at the
+  defined corner exit. Slow: delta <= -50 km/h; fast: delta >= +50 km/h;
+  otherwise on pace. Missing reference or user measurements stay unavailable.
+- Detect brake onset at a 15% pedal crossing and acceleration pickup at a 10%
+  throttle crossing near/after the apex. Preserve trace gaps and limit exit-speed
+  interpolation to adjacent samples at most 30 metres apart.
+- Support a user-selected complete reference lap, or explicit track-section
+  optimal braking/acceleration/exit targets. Legacy inferred apex benchmarks
+  are not used as optimal exit or acceleration targets.
+- Gemini prompt uses the requested race-engineer opening and per-turn measurements.
+  Request JSON output and strictly validate the turn/advice list before rendering
+  individual statements. Removed Markdown parsing and fabricated fallback advice.
+- Analyse all turns, reject invalid/partial/missing/wrong-track laps, honour exact
+  requested lap, and run the blocking Gemini call outside the async event loop.
+- Fixed request model scope so FastAPI binds JSON request bodies correctly.
+- Added explicit service/error states, reference selection, and measured target
+  display. Added missing python-dotenv dependency and README usage details.
+- Validation: 175 backend tests passed, production TypeScript/Vite build passed,
+  pip check clean. Gemini transport/schema tested with a mock; live Gemini calls,
+  browser interaction, and live F1 25 validation remain pending. Existing track
+  JSON lacks optimal exit targets; select a reference lap or supply explicit targets.

@@ -7,7 +7,7 @@ captures, and serves a local status dashboard and live JSON API.
 ## Requirements
 
 - Python 3.9 or newer
-- Node.js 18 or newer and npm (for the dashboard — auto-installed on first run)
+- Node.js 18 or newer and npm (to build the dashboard)
 - F1 25 configured to send UDP telemetry using **2025** format to port `20777`
 
 ## Install
@@ -20,26 +20,34 @@ source .venv/bin/activate
 python -m pip install -e ".[dev]"
 ```
 
-For the Gemini coaching integration, install the optional AI Studio
+Build the React dashboard once so KREM can serve it:
+
+```sh
+cd frontend
+npm ci
+npm run build
+cd ..
+```
+
+For the planned Gemini coaching integration, install the optional AI Studio
 client as well:
 
 ```sh
 python -m pip install -e ".[coach]"
 ```
 
-## Run
+LLM requests will use the Gemini API from Google AI Studio. The coach is not
+implemented yet; its API key will remain server-side.
 
-**Single command, single port** — the frontend is auto-built on startup:
+## Run
 
 ```sh
 python -m krem
 ```
 
-Open [http://localhost:8765](http://localhost:8765). Everything — the React
-dashboard, the REST API, and the WebSocket — runs on **one port (8765)**.
-
-The frontend is built automatically if `frontend/dist` is missing or stale.
-If Node.js / npm is not installed, KREM falls back to a diagnostic status page.
+Open [http://localhost:8765](http://localhost:8765). By default KREM listens
+on `0.0.0.0:20777` and records captures in `captures/`. If the frontend has
+not been built, the server shows a diagnostic status page instead.
 
 Useful options:
 
@@ -47,8 +55,6 @@ Useful options:
 python -m krem --port 20778 --web-port 8766
 python -m krem --no-record
 python -m krem --replay captures/example.f1udp --replay-speed 2
-python -m krem --rebuild          # Force-rebuild the frontend
-python -m krem --no-build         # Skip the auto-build check
 ```
 
 The dashboard and `/api/status`, `/api/snapshot`, `/api/session`, `/api/player`,
@@ -183,3 +189,28 @@ Validation: 156 backend tests passed; production frontend build passed. A
 simulated DOM/WebSocket check covered pause retention, frozen plots, duplicate
 suppression, resume gaps, disconnect retention and session clearing. Actual
 F1 25 pause/resume behaviour still needs checking on the game owner's PC.
+
+### Corner exit coach
+
+The coach compares speed at each mapped corner's `end_m`, using a ±50 km/h
+threshold: delta ≤ −50 is slow, delta ≥ +50 is fast, otherwise on pace.
+It measures braking onset at a crossing of 15% brake, and acceleration onset at
+a crossing of 10% throttle from 15 m before the apex through the exit. These are
+pedal events, not an inference about longitudinal acceleration. Distances are
+metres from the start of the lap. Exit speed is interpolated only between adjacent
+samples no more than 30 m apart, without a recorded gap.
+
+Choose a valid, complete reference lap in the coach dialog and click Run Coach
+to use its measured braking, acceleration and exit-speed values as targets.
+The reference must differ from the analysed lap; it is not guaranteed optimal.
+Alternatively, supply `ideal_exit_speed_kph`, `optimal_brake_m`, and
+`optimal_acceleration_start_m` on each section of the track JSON. Existing
+apex-speed estimates are never substituted for these targets. Missing targets
+or measurements are shown as unavailable.
+
+Gemini receives per-turn optimal and user measurements and returns a JSON array
+of `{ "turn": "1", "advice": "..." }` entries. The server validates exact turn
+coverage, unique identifiers, fields and nonempty text before displaying advice.
+Malformed responses and service failures show an unavailable status, with no
+fabricated fallback coaching. Set `GEMINI_MODEL` to override the model. API keys
+remain on the server. Invalid or partial laps cannot be coached.

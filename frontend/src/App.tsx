@@ -1,7 +1,5 @@
 import CarStatusPanel from "./components/CarStatusPanel";
 import LapComparePanel from "./components/LapComparePanel";
-import TelemetryReplayPanel from "./components/TelemetryReplayPanel";
-import CoachCards, { type CoachAnalysisResponse } from "./components/CoachCards";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type ConnectionState = "connecting" | "live" | "reconnecting";
@@ -107,8 +105,6 @@ interface LapSample {
   throttle?: MaybeNumber;
   brake?: MaybeNumber;
   speed?: MaybeNumber;
-  tyres?: Player["tyres"] | null;
-  damage?: Player["damage"] | null;
 }
 
 interface LapSummary {
@@ -133,8 +129,36 @@ interface PacketFreshness {
   ageSeconds: number | null;
 }
 
+interface CornerDeltaUI {
+  turn: string;
+  name: string;
+  classification: "fast" | "slow" | "on pace" | "unavailable";
+  ideal_exit_speed_kph: number | null;
+  player_exit_speed_kph: number | null;
+  ideal_brake_m: number | null;
+  player_brake_on_m: number | null;
+  ideal_throttle_m: number | null;
+  player_throttle_on_m: number | null;
+}
+
+interface CoachAnalysisResponse {
+  track?: {
+    track_id: number;
+    track_name: string;
+    track_length_m: number;
+    ideal_lap_time_ms: number;
+  };
+  lapNum?: number | null;
+  lapTimeMs?: number;
+  nextSector?: number;
+  currentSector?: number;
+  hasApiKey: boolean;
+  deltas: CornerDeltaUI[];
+  advice: { turn: string; advice: string }[];
+  status: string;
+}
+
 interface TelemetrySnapshot {
-  sectorTiming?: Array<{ sector: number; state: string; timeMs: number | null; grade: string }>;
   liveStreamId?: string;
   gamePaused?: boolean;
   telemetrySample?: { id: string; sessionTime: number } | null;
@@ -148,7 +172,6 @@ interface TelemetrySnapshot {
   events?: Array<string | TelemetryEvent>;
   laps?: LapSummary[];
   frameCount?: MaybeNumber;
-  playerCarIndex?: MaybeNumber;
 }
 
 interface PlotPoint {
@@ -170,7 +193,6 @@ interface TrackOutline {
   rightEdge: Position[];
   racingLine: Position[];
   orientation: number;
-  sfLine?: { pos: [number, number]; heading?: number };
 }
 
 const HISTORY_LIMIT = 360;
@@ -400,12 +422,6 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
   const trackRacingLine = bounds && trackOutline
     ? toSvgPath(rotateTrackPoints(trackOutline.racingLine, trackOutline.orientation), bounds.project, false)
     : "";
-  const sfLeft = bounds && trackOutline?.leftEdge?.length
-    ? bounds.project(rotateTrackPoints([trackOutline.leftEdge[0]], trackOutline.orientation)[0])
-    : null;
-  const sfRight = bounds && trackOutline?.rightEdge?.length
-    ? bounds.project(rotateTrackPoints([trackOutline.rightEdge[0]], trackOutline.orientation)[0])
-    : null;
 
   return (
     <div className="map-wrap">
@@ -418,30 +434,8 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
         <rect width="1000" height="560" fill="url(#map-grid)" />
         {trackOutline && trackSurfacePath ? (
           <>
-            <path d={trackSurfacePath} className="circuit-halo" />
-            <path d={trackSurfacePath} className="circuit-surface" />
-            <path d={trackRacingLine} className="circuit-racing-line" />
-            {sfLeft && sfRight && (
-              <g className="map-start">
-                <line x1={sfLeft.x} y1={sfLeft.y} x2={sfRight.x} y2={sfRight.y} className="sf-line" />
-                <rect
-                  x={(sfLeft.x + sfRight.x) / 2 - 13}
-                  y={(sfLeft.y + sfRight.y) / 2 - 7}
-                  width="26"
-                  height="14"
-                  rx="3"
-                  className="sf-badge"
-                />
-                <text
-                  x={(sfLeft.x + sfRight.x) / 2}
-                  y={(sfLeft.y + sfRight.y) / 2 + 3.5}
-                  textAnchor="middle"
-                  className="sf-badge-text"
-                >
-                  S/F
-                </text>
-              </g>
-            )}
+            <path d={trackSurfacePath} fill="rgba(44, 180, 166, 0.12)" stroke="rgba(78, 220, 193, 0.9)" strokeWidth={1.1} />
+            <path d={trackRacingLine} fill="none" stroke="rgba(138, 173, 255, 0.72)" strokeWidth={1.2} strokeDasharray="4 4" />
           </>
         ) : (
           hasTrack && path && (
@@ -450,15 +444,6 @@ function TrackMap({ cars, history, player, trackOutline }: { cars: Car[]; histor
               <polyline points={path} className="track-line" />
             </>
           )
-        )}
-        {bounds && transformedWorld.mappedHistory.length > 1 && (
-          <polyline
-            points={(trackOutline ? transformedWorld.mappedHistory.slice(-90) : transformedWorld.mappedHistory).map((point) => {
-              const projected = bounds.project(point);
-              return `${projected.x.toFixed(1)},${projected.y.toFixed(1)}`;
-            }).join(" ")}
-            className="player-trail"
-          />
         )}
         {cars.map((car, index) => {
           if (!bounds || !isNumber(car.worldX) || !isNumber(car.worldZ)) return null;
@@ -521,9 +506,9 @@ function MiniChart({ points, mode }: { points: PlotPoint[]; mode: "speed" | "ped
   const innerHeight = height - padding.top - padding.bottom;
   const x = (index: number) => padding.left + (points.length <= 1 ? 0 : (index / (points.length - 1)) * innerWidth);
   const y = (value: number) => padding.top + innerHeight - Math.max(0, Math.min(value, maxY)) / maxY * innerHeight;
-  const speedPath = points.map((point, index) => `${index > 0 && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.speed).toFixed(1)}`).join(" ");
-  const throttlePath = points.map((point, index) => `${index > 0 && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.throttle * 100).toFixed(1)}`).join(" ");
-  const brakePath = points.map((point, index) => `${index > 0 && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.brake * 100).toFixed(1)}`).join(" ");
+  const speedPath = points.map((point, index) => `${index && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.speed).toFixed(1)}`).join(" ");
+  const throttlePath = points.map((point, index) => `${index && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.throttle * 100).toFixed(1)}`).join(" ");
+  const brakePath = points.map((point, index) => `${index && !point.gapBefore ? "L" : "M"}${x(index).toFixed(1)} ${y(point.brake * 100).toFixed(1)}`).join(" ");
   const gridValues = mode === "speed" ? [0, maxY / 2, maxY] : [0, 50, 100];
 
   return (
@@ -552,14 +537,15 @@ function App() {
   const { snapshot, state, lastMessageAt } = useTelemetry();
   const [plot, setPlot] = useState<PlotPoint[]>([]);
   const [mapHistory, setMapHistory] = useState<Position[]>([]);
+  const [trackCatalog, setTrackCatalog] = useState<Record<number, TrackOutline>>({});
   const [trackOutline, setTrackOutline] = useState<TrackOutline | null>(null);
   const [lightTheme, setLightTheme] = useState(false);
   const [selectedLap, setSelectedLap] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"live" | "laps" | "replay">("live");
+  const [activeTab, setActiveTab] = useState<"live" | "laps">("live");
   const [coachOpen, setCoachOpen] = useState(false);
+  const [coachReference, setCoachReference] = useState("");
+  const [coachError, setCoachError] = useState<string | null>(null);
   const [coachLoading, setCoachLoading] = useState(false);
-  const [coachError, setCoachError] = useState("");
-  const coachRequest = useRef(0);
   const [coachData, setCoachData] = useState<CoachAnalysisResponse | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [keySaveMsg, setKeySaveMsg] = useState("");
@@ -604,43 +590,30 @@ function App() {
   const player = shown?.player;
   const session = shown?.session;
 
-  useEffect(() => {
-    coachRequest.current += 1;
-    setCoachData(null);
-    setCoachError("");
-    setCoachLoading(false);
-    setCoachOpen(false);
-  }, [snapshot?.liveStreamId, snapshot?.recorder?.epoch, snapshot?.recorder?.sessionUid]);
-
   const runCoachAnalysis = async () => {
-    const request = ++coachRequest.current;
+    setCoachError(null);
+    setCoachData(null);
     setCoachLoading(true);
     setCoachOpen(true);
-    setCoachError("");
-    setCoachData(null);
     try {
       const res = await fetch("/api/coach/analyse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          referenceLapNum: coachReference ? Number(coachReference) : undefined,
           trackId: session?.trackId,
           lapNum: isNumber(player?.lapNum) && player.lapNum > 1 ? player.lapNum - 1 : undefined,
         }),
       });
-      let data: any = null;
-      try {
-        data = await res.json();
-      } catch {
-        // non-JSON response
-      }
-      if (request !== coachRequest.current) return;
-      if (!res.ok) throw new Error(data?.detail || "Analysis failed. Try again.");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Coaching unavailable");
+      if (!Array.isArray(data.advice) || !Array.isArray(data.deltas) || !data.advice.every((item: {turn?: unknown; advice?: unknown}) => item && typeof item.turn === "string" && typeof item.advice === "string")) throw new Error("Invalid coaching response");
       setCoachData(data);
-      if (typeof data?.hasApiKey === "boolean") setHasApiKey(data.hasApiKey);
+      if (typeof data.hasApiKey === "boolean") setHasApiKey(data.hasApiKey);
     } catch (e) {
-      if (request === coachRequest.current) setCoachError(e instanceof Error ? e.message : "Analysis failed");
+      setCoachError(e instanceof Error ? e.message : "Coaching unavailable");
     } finally {
-      if (request === coachRequest.current) setCoachLoading(false);
+      setCoachLoading(false);
     }
   };
   const cars = Array.isArray(shown?.cars) ? shown.cars : [];
@@ -662,43 +635,57 @@ function App() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+
+    const preloadTracks = async () => {
+      const nextCatalog: Record<number, TrackOutline> = {};
+      const entries = Object.entries(TRACK_FILES) as [string, string][];
+
+      for (const [trackIdString, fileName] of entries) {
+        try {
+          const response = await fetch(`/track_data/${fileName}`);
+          if (!response.ok) continue;
+          const data = await response.json() as {
+            left_edge?: [number, number][];
+            right_edge?: [number, number][];
+            lines?: { formula1?: { racing_line?: [number, number][] } };
+            orientation?: number;
+          };
+
+          const leftEdge = (data.left_edge ?? []).map(([x, z]) => ({ x, z }));
+          const rightEdge = (data.right_edge ?? []).map(([x, z]) => ({ x, z }));
+          const racingLine = (data.lines?.formula1?.racing_line ?? []).map(([x, z]) => ({ x, z }));
+
+          nextCatalog[Number(trackIdString)] = {
+            leftEdge,
+            rightEdge,
+            racingLine,
+            orientation: Number(data.orientation ?? 0),
+          };
+        } catch {
+          // Ignore any track file that fails to load; the session will keep showing the live trace fallback.
+        }
+      }
+
+      if (active) {
+        setTrackCatalog(nextCatalog);
+      }
+    };
+
+    preloadTracks();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const trackId = session?.trackId;
-    const fileName = trackId == null ? undefined : TRACK_FILES[trackId];
-    setTrackOutline(null);
-    if (!fileName) return;
-
-    const controller = new AbortController();
-    fetch(`/track_data/${fileName}`, { signal: controller.signal })
-      .then((response) => (response.ok ? response.json() : Promise.reject()))
-      .then((data) => {
-        if (controller.signal.aborted) return;
-        setTrackOutline({
-          leftEdge: (data.left_edge ?? []).map(([x, z]: number[]) => ({ x, z })),
-          rightEdge: (data.right_edge ?? []).map(([x, z]: number[]) => ({ x, z })),
-          racingLine: (data.lines?.formula1?.racing_line ?? []).map(([x, z]: number[]) => ({ x, z })),
-          orientation: Number(data.orientation ?? 0),
-          sfLine: data.sf_line,
-        });
-      })
-      .catch(() => {
-        // Fallback to database circuit API if available
-        fetch(`/api/circuits/${trackId}`, { signal: controller.signal })
-          .then((r) => (r.ok ? r.json() : null))
-          .then((data) => {
-            if (!data || controller.signal.aborted) return;
-            setTrackOutline({
-              leftEdge: (data.left_edge ?? []).map(([x, z]: number[]) => ({ x, z })),
-              rightEdge: (data.right_edge ?? []).map(([x, z]: number[]) => ({ x, z })),
-              racingLine: (data.lines?.formula1?.racing_line ?? []).map(([x, z]: number[]) => ({ x, z })),
-              orientation: Number(data.orientation ?? 0),
-              sfLine: data.sf_line,
-            });
-          })
-          .catch(() => {});
-      });
-
-    return () => controller.abort();
-  }, [session?.trackId]);
+    if (trackId === undefined || trackId === null || trackId < 0) {
+      setTrackOutline(null);
+      return;
+    }
+    setTrackOutline(trackCatalog[trackId] ?? null);
+  }, [session?.trackId, trackCatalog]);
 
   useEffect(() => {
     if (frozen) { traceGap.current = true; return; }
@@ -707,9 +694,7 @@ function App() {
     if (marker === lastSample.current) return;
     lastSample.current = marker;
     // WebSocket refreshes and repeated paused frames are not driving samples.
-    if (lastGameTime.current !== null && sessionTime < lastGameTime.current) {
-      traceGap.current = true;
-    }
+    if (lastGameTime.current !== null && sessionTime <= lastGameTime.current) return;
     lastGameTime.current = sessionTime;
 
     if (isNumber(player.speed) && isNumber(player.throttle) && isNumber(player.brake)) {
@@ -726,8 +711,7 @@ function App() {
     }
 
     const playerCar = cars.find((car) => car.isPlayer)
-      ?? (isNumber(snapshot?.playerCarIndex) ? cars.find((car) => car.index === snapshot?.playerCarIndex) : undefined)
-      ?? (isNumber(player?.position) ? cars.find((car) => car.position === player?.position) : undefined);
+      ?? (isNumber(player.position) ? cars.find((car) => car.position === player.position) : undefined);
     if (playerCar && isNumber(playerCar.worldX) && isNumber(playerCar.worldZ)) {
       setMapHistory((current) => [
         ...current.slice(-(MAP_HISTORY_LIMIT - 1)),
@@ -755,7 +739,7 @@ function App() {
   }, [lapHistory, latestLap, selectedLap]);
 
   return (
-    <main className={`dashboard ${lightTheme ? "theme-light" : ""} ${activeTab === "live" ? "race-view" : activeTab === "replay" ? "race-view replay-view" : "compare-view"}`}>
+    <main className={lightTheme ? "dashboard theme-light" : "dashboard"}>
       <header className="topbar">
         <a className="brand" href="#" aria-label="KREM dashboard home">
           <span className="brand-mark"><i /><i /><i /></span>
@@ -784,13 +768,12 @@ function App() {
         <div className="status-item status-wide"><span className="status-label">FORMAT</span><strong>F1 25 · 2025</strong></div>
         <div className="status-tabs" aria-label="Dashboard views">
           <button className={activeTab === "live" ? "status-tab active" : "status-tab"} onClick={() => setActiveTab("live")}>Live</button>
-          <button className={activeTab === "replay" ? "status-tab active" : "status-tab"} onClick={() => setActiveTab("replay")}>Telemetry Replay</button>
           <button className={activeTab === "laps" ? "status-tab active" : "status-tab"} onClick={() => setActiveTab("laps")}>Lap compare</button>
         </div>
         <div className="status-event"><span className="event-pulse" />{eventText || "READY FOR RACE CONTROL EVENTS"}</div>
       </div>
 
-      {!connected && activeTab === "live" && (
+      {!connected && (
         <div className="connection-banner" role="status">
           <span className="banner-icon">!</span>
           <div>
@@ -812,21 +795,34 @@ function App() {
               <span>{displayNumber(player?.speed)} <small>KM/H</small></span>
             </div>
             <TrackMap cars={cars} history={mapHistory} player={player} trackOutline={trackOutline} />
-            <div className="race-timing">
+            <div className="panel-foot"><span><i className="legend-live" />PLAYER POSITION</span><span>WORLD X / Z</span></div>
+          </article>
+
+          <article className="panel panel-timing">
+            <PanelHeading eyebrow="02 / LAP ANALYSIS" title="Sectors & timing" trailing={isNumber(player?.lapNum) ? <span className="lap-badge">LAP {player.lapNum}</span> : undefined} />
             <div className="timing-main">
               <div className="timer-block"><span className="eyebrow">CURRENT LAP</span><strong>{formatTime(player?.lapTime)}</strong><span className="timer-status">{player?.invalid ? "INVALID LAP" : currentSector ? `IN SECTOR ${currentSector}` : "WAITING FOR LAP"}</span></div>
               <div className="position-large"><span>POSITION</span><strong>{isNumber(player?.position) ? `P${player.position}` : "—"}</strong></div>
             </div>
             <div className="sector-track" aria-label="Three sector timing progress">
-              {(snapshot?.sectorTiming?.length === 3 ? snapshot.sectorTiming : [1, 2, 3].map(sector => ({ sector, state: "upcoming", timeMs: null, grade: "neutral" }))).map((timing) => (
-                <div key={timing.sector} className={`sector-segment grade-${timing.grade} ${timing.state === "current" ? "sector-current" : ""}`}>
-                  <span>S{timing.sector} <small>{timing.state === "current" ? "RUNNING" : timing.state === "complete" ? "COMPLETE" : "NEXT"}</small></span>
-                  <strong>{timing.timeMs === 0 ? "0.000" : formatTime(timing.timeMs)}</strong>
+              {[1, 2, 3].map((sector) => (
+                <div key={sector} className={`sector-segment ${currentSector === sector ? "sector-current" : currentSector && currentSector > sector ? "sector-complete" : ""}`}>
+                  <span>S{sector}</span>
+                  <strong>{formatTime(sector === 1 ? player?.sector1TimeMs : sector === 2 ? player?.sector2TimeMs : player?.sector3TimeMs)}</strong>
+                  {sector < 3 && <i className="sector-divider" />}
                 </div>
               ))}
             </div>
-            <div className="timing-legend"><span className="grade-purple">● Session best</span><span className="grade-green">● Personal best</span><span className="grade-yellow">● Slower</span><span>Grey: no valid reference</span></div>
-            <div className="race-context">LAP {displayNumber(player?.lapNum)} / {displayNumber(session?.totalLaps)} · TRACK {displayNumber(session?.trackTemp)}°C · AIR {displayNumber(session?.airTemp)}°C</div>
+            <div className="timing-details">
+              <div><span>LAP DISTANCE</span><strong>{distance === null ? "—" : `${Math.max(0, distance).toFixed(0)} m`}</strong></div>
+              <div><span>RACE LAPS</span><strong>{isNumber(session?.totalLaps) ? `${isNumber(player?.lapNum) ? player.lapNum : "—"} / ${session.totalLaps}` : "—"}</strong></div>
+              <div><span>LAP INVALID</span><strong className={player?.invalid == null ? "" : player.invalid ? "text-red" : "text-green"}>{player?.invalid == null ? "—" : player.invalid ? "YES" : "NO"}</strong></div>
+            </div>
+            <div className="timing-session">
+              <div><span>TRACK</span><strong>{session?.trackName || "—"}</strong></div>
+              <div><span>WEATHER</span><strong>{session?.weather ?? "—"}</strong></div>
+              <div><span>TRACK TEMP</span><strong>{displayNumber(session?.trackTemp, 0, "°")}</strong></div>
+              <div><span>AIR TEMP</span><strong>{displayNumber(session?.airTemp, 0, "°")}</strong></div>
             </div>
           </article>
 
@@ -848,6 +844,11 @@ function App() {
             <div className="panel-foot"><span>DISTANCE {distance === null ? "—" : `${distance.toFixed(0)} M`}</span><span>LIVE TRACE · NO REFERENCE LAP</span></div>
           </article>
 
+          <article className="panel panel-car-health">
+            <PanelHeading eyebrow="03 / CHASSIS" title="Car health" trailing={<span className="panel-chip">TYRES · WINGS</span>} />
+            <CarStatusPanel player={player} freshness={snapshot?.freshness} online={socketConnected} retained={frozen} paused={paused} />
+          </article>
+
           <article className="panel panel-values">
             <PanelHeading eyebrow="04 / CAR TELEMETRY" title="Player values" trailing={<span className="gear-readout">{displayNumber(player?.gear)}</span>} />
             <div className="values-grid">
@@ -856,41 +857,35 @@ function App() {
               <Stat label="THROTTLE" value={percent(player?.throttle)} />
               <Stat label="BRAKE" value={percent(player?.brake)} />
               <Stat label="STEERING" value={displayNumber(player?.steer, 2)} />
-              <Stat label="SUGGESTED GEAR" value={isNumber(player?.suggestedGear) && player.suggestedGear > 0 ? String(player.suggestedGear) : "—"} />
+              <Stat label="SUGGESTED GEAR" value={displayNumber(player?.suggestedGear)} />
               <Stat label="LATERAL G" value={displayNumber(player?.gLat, 2)} />
               <Stat label="LONGITUDINAL G" value={displayNumber(player?.gLong, 2)} />
               <Stat label="DRS" value={player?.drs == null ? "—" : player.drs ? "OPEN" : "CLOSED"} />
               <Stat label="DRS AVAILABLE" value={player?.drsAllowed == null ? "—" : player.drsAllowed ? "YES" : "NO"} />
-              <Stat label="ERS STORE" value={displayNumber(isNumber(player?.ersStore) ? player.ersStore / 1_000_000 : null, 2)} unit="MJ" />
+              <Stat label="ERS STORE" value={displayNumber(player?.ersStore, 2)} unit="MJ" />
               <Stat label="ERS MODE" value={displayNumber(player?.ersMode)} />
               <Stat label="FUEL" value={displayNumber(player?.fuel, 1)} unit="KG" />
               <Stat label="FUEL LAPS" value={displayNumber(player?.fuelLaps, 1)} />
-              <Stat label="TYRE COMPOUND" value={player?.tyres?.visualCompoundName ?? (player?.tyreCompound == null ? "—" : String(player.tyreCompound))} />
+              <Stat label="TYRE COMPOUND" value={player?.tyreCompound == null ? "—" : String(player.tyreCompound)} />
               <Stat label="TYRE AGE" value={displayNumber(player?.tyreAge)} unit="LAPS" />
             </div>
             <div className="values-footer">
               <div className="driving-state"><span className="state-dot" /><span>{isNumber(player?.brake) && isNumber(player?.throttle) ? (player.brake ?? 0) >= 0.02 ? "BRAKING" : (player.throttle ?? 0) >= 0.98 ? "FULL THROTTLE" : (player.throttle ?? 0) > 0.02 ? "ACCELERATING" : "COASTING" : "AWAITING TELEMETRY"}</span></div>
-
-            </div>
-            <div className="health-heading"><h3>Car health</h3><span>DAMAGE OVERVIEW</span></div>
-            <CarStatusPanel player={player} freshness={snapshot?.freshness} online={socketConnected} retained={frozen} paused={paused} />
-            <section className="race-coach">
-              <div className="coach-toolbar"><div><span className="eyebrow">PREVIOUS LAP → UPCOMING SECTOR</span><h3>Corner briefing · S{currentSector ? currentSector % 3 + 1 : "—"}</h3></div>
-                <button className="coach-button" onClick={runCoachAnalysis} disabled={coachLoading || !currentSector}>{coachLoading ? "Analysing…" : "✦ Analyse next sector"}</button>
+              <div className="coach-action">
+                <button
+                  className="coach-button active-coach"
+                  onClick={runCoachAnalysis}
+                  disabled={coachLoading}
+                  title="Compare corner exits and request per-turn coaching"
+                >
+                  <span className="coach-spark">✦</span> {coachLoading ? "ANALYSING TELEMETRY..." : "GEMINI AI COACH"}
+                  <span className="coach-tag">EXIT SPEED</span>
+                </button>
+                <span className="coach-note">{hasApiKey ? "● GEMINI KEY CONFIGURED" : "○ TELEMETRY MODE · SET GEMINI KEY FOR LIVE RADIO"}</span>
               </div>
-              <p className="coach-empty">Brake and throttle timing from your previous lap, one card per turn.</p>
-              {!hasApiKey && <details className="coach-key-settings"><summary>Connect Gemini for AI coaching</summary><div><input type="password" aria-label="Gemini API key" placeholder="Gemini API key" value={apiKeyInput} onChange={e => setApiKeyInput(e.target.value)} /><button onClick={saveApiKey}>Save key</button><span>{keySaveMsg}</span></div></details>}
-            </section>
-
+            </div>
           </article>
         </section>
-      ) : activeTab === "replay" ? (
-        <TelemetryReplayPanel
-          liveLaps={lapHistory}
-          currentSession={session}
-          currentTrackOutline={trackOutline}
-          livePlayer={player}
-        />
       ) : (
         <LapComparePanel />
       )}
@@ -900,13 +895,95 @@ function App() {
         <span>PACKETS {displayNumber(stats?.packetsReceived)} <i>·</i> ACCEPTED {displayNumber(stats?.packetsAccepted)} <i>·</i> REJECTED {displayNumber(stats?.packetsRejected)}</span>
         <span>{lastMessageAt ? `UPDATED ${new Date(lastMessageAt).toLocaleTimeString()}` : "WAITING FOR DATA"}</span>
       </footer>
-      {coachOpen && <div className="coach-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCoachOpen(false); }} role="presentation">
-        <section className="coach-modal" role="dialog" aria-modal="true" aria-label="AI race engineer analysis">
-          <header className="coach-modal-header"><div><span>✦ AI RACE ENGINEER</span><h2>Corner briefing · {session?.trackName || "Current circuit"}</h2><p>SECTOR {coachData?.nextSector ?? (currentSector ? currentSector % 3 + 1 : "—")} · BASED ON LAP {coachData?.lapNum ?? (isNumber(player?.lapNum) ? player.lapNum - 1 : "—")}</p></div><button onClick={() => setCoachOpen(false)} aria-label="Close analysis">×</button></header>
-          <div className="coach-modal-body"><CoachCards data={coachData} loading={coachLoading} error={coachError} /></div>
-        </section>
-      </div>}
 
+      {coachOpen && (
+        <div className="coach-modal-backdrop" onClick={() => setCoachOpen(false)}>
+          <div className="coach-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="coach-modal-header">
+              <div>
+                <span className="coach-eyebrow">✦ AI RACE ENGINEER</span>
+                <h2>Corner Exit Coach · {coachData?.track?.track_name || session?.trackName || "Circuit"}</h2>
+
+              </div>
+              <button className="coach-close-btn" onClick={() => setCoachOpen(false)}>✕</button>
+            </div>
+
+            <div className="coach-modal-body">
+              <label>Target source <select value={coachReference} onChange={e => setCoachReference(e.target.value)}>
+                <option value="">Configured optimal targets</option>
+                {lapHistory.filter(lap => !lap.invalid && !lap.partial).map(lap => <option key={lap.lap} value={lap.lap ?? ""}>Reference lap {lap.lap}</option>)}
+              </select></label>
+              <p>A reference lap supplies measured targets; it is not guaranteed optimal. Distances are metres from lap start. Missing configured targets remain unavailable.</p>
+              <button onClick={runCoachAnalysis} disabled={coachLoading}>Run Coach</button>
+              {!hasApiKey && (
+                <div className="coach-key-banner">
+                  <div className="coach-key-desc">
+                    <strong>Enter Google Gemini API Key:</strong>
+                    <span>Enables live race engineer advice powered by Gemini.</span>
+                  </div>
+                  <div className="coach-key-inputs">
+                    <input
+                      type="password"
+                      placeholder="AIzaSy..."
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                    />
+                    <button onClick={saveApiKey}>Connect API Key</button>
+                  </div>
+                  {keySaveMsg && <div className="key-msg">{keySaveMsg}</div>}
+                </div>
+              )}
+
+              {coachError && <p role="alert">{coachError}</p>}
+              {coachLoading ? (
+                <div className="coach-spinner-box">
+                  <span className="coach-spinner" />
+                  <p>Comparing corner exits, braking and acceleration starts...</p>
+                </div>
+              ) : coachData ? (
+                <div className="coach-results">
+                  <div className="coach-report-box">
+                    <div className="briefing-header">
+                      <h3>RACE ENGINEER RADIO · PER TURN</h3>
+                      <span className="last-lap-tag">LAST COMPLETED LAP {coachData.lapNum ? `(#${coachData.lapNum})` : ""}</span>
+                    </div>
+                    <div className="coach-markdown-text">
+                      {coachData.status !== "ok" && <p>{coachData.status === "key_required" ? "Add a Gemini key to enable coaching." : "AI advice unavailable. Measured values are shown below; retry coaching."}</p>}
+                      {coachData.advice.map((item) => <p key={item.turn}><strong>Turn {item.turn}:</strong> {item.advice}</p>)}
+                    </div>
+                  </div>
+
+                  {coachData.deltas && coachData.deltas.length > 0 && (
+                    <div className="coach-deltas-section">
+                      <h3>CORNER EXIT SPEED COMPARISON · ±50 KM/H</h3>
+                      <div className="deltas-grid">
+                        {coachData.deltas.map((delta) => (
+                          <div key={delta.turn} className={`delta-card ${delta.classification === "slow" ? "loss-high" : ""}`}>
+                            <div className="delta-card-top">
+                              <span className="delta-turn">T{delta.turn} {delta.name}</span>
+                              <span className={`delta-loss-badge ${delta.classification === "slow" ? "badge-red" : delta.classification === "unavailable" ? "" : "badge-green"}`}>
+                                {delta.classification.toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="delta-stats">
+                              <div><span>Optimal exit:</span> <b>{delta.ideal_exit_speed_kph?.toFixed(1) ?? "Unavailable"}{delta.ideal_exit_speed_kph != null ? " km/h" : ""}</b></div>
+                              <div><span>Your exit:</span> <b>{delta.player_exit_speed_kph?.toFixed(1) ?? "Unavailable"}{delta.player_exit_speed_kph != null ? " km/h" : ""}</b></div>
+                              <div><span>Brake optimal / you (m):</span> <b>{delta.ideal_brake_m?.toFixed(1) ?? "—"} / {delta.player_brake_on_m?.toFixed(1) ?? "—"}</b></div>
+                              <div><span>Acceleration optimal / you (m):</span> <b>{delta.ideal_throttle_m?.toFixed(1) ?? "—"} / {delta.player_throttle_on_m?.toFixed(1) ?? "—"}</b></div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p>Click "Run Coach" to evaluate your telemetry.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
     </main>
   );

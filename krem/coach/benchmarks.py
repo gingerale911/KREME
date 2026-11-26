@@ -8,6 +8,7 @@ NO Silverstone fallbacks!
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,9 @@ class CornerBenchmark:
     ideal_apex_gear: int
     ideal_throttle_m: float
     notes: str = ""
+    ideal_exit_speed_kph: float | None = None
+    optimal_brake_m: float | None = None
+    optimal_acceleration_start_m: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -42,6 +46,9 @@ class CornerBenchmark:
             "ideal_apex_gear": self.ideal_apex_gear,
             "ideal_throttle_m": round(self.ideal_throttle_m, 1),
             "notes": self.notes,
+            "ideal_exit_speed_kph": self.ideal_exit_speed_kph,
+            "optimal_brake_m": self.optimal_brake_m,
+            "optimal_acceleration_start_m": self.optimal_acceleration_start_m,
         }
 
 
@@ -172,11 +179,15 @@ def load_track_sections_from_json(json_path: Path) -> tuple[str, float, float, f
     track_name = data.get("track", "Unknown Track")
     track_length = float(data.get("game_track_length_m", 5000.0))
     sectors = data.get("sectors", [])
-    splits = sorted([float(s.get("lap_dist_m", 0.0)) for s in sectors if float(s.get("lap_dist_m", 0.0)) > 50.0])
-    s1_end = splits[0] if len(splits) > 0 else track_length * 0.33
-    s2_end = splits[1] if len(splits) > 1 else track_length * 0.66
+    s1_end = float(sectors[0].get("lap_dist_m", track_length * 0.33)) if len(sectors) > 0 else track_length * 0.33
+    s2_end = float(sectors[1].get("lap_dist_m", track_length * 0.66)) if len(sectors) > 1 else track_length * 0.66
     sections = data.get("sections", [])
     return track_name, track_length, s1_end, s2_end, sections
+
+
+def _target(section, key):
+    value = section.get(key)
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else None
 
 
 def generate_benchmark_for_track(track_id: int, track_data_dir: Path) -> TrackBenchmark:
@@ -228,6 +239,9 @@ def generate_benchmark_for_track(track_id: int, track_data_dir: Path) -> TrackBe
                     ideal_apex_gear=ideal_gear,
                     ideal_throttle_m=ideal_throttle,
                     notes=notes,
+                    ideal_exit_speed_kph=_target(s, "ideal_exit_speed_kph"),
+                    optimal_brake_m=_target(s, "optimal_brake_m"),
+                    optimal_acceleration_start_m=_target(s, "optimal_acceleration_start_m"),
                 ))
 
             return TrackBenchmark(
