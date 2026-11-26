@@ -389,19 +389,50 @@ export default function TelemetryReplayPanel({
     return 90_000;
   }, [activeLap]);
 
-  const s1TimeMs = activeLap?.sector1TimeMs ?? Math.round(totalDurationMs * 0.32);
-  const s2TimeMs = activeLap?.sector2TimeMs ?? Math.round(totalDurationMs * 0.38);
-  const s1EndMs = s1TimeMs;
-  const s2EndMs = s1TimeMs + s2TimeMs;
+  const { s1TimeMs, s2TimeMs, s1EndMs, s2EndMs } = useMemo(() => {
+    const samples = activeLap?.samples ?? [];
+    const recordedS1 =
+      isNumber(activeLap?.sector1TimeMs) && activeLap.sector1TimeMs > 0
+        ? activeLap.sector1TimeMs
+        : null;
+    const recordedS2 =
+      isNumber(activeLap?.sector2TimeMs) && activeLap.sector2TimeMs > 0
+        ? activeLap.sector2TimeMs
+        : null;
+
+    let s1End: number | null = recordedS1;
+    if (s1End === null) {
+      const firstS2Sample = samples.find((s) => isNumber(s.sector) && s.sector >= 1);
+      if (firstS2Sample && isNumber(firstS2Sample.elapsedTimeMs)) {
+        s1End = firstS2Sample.elapsedTimeMs;
+      }
+    }
+
+    let s2End: number | null =
+      s1End !== null && recordedS2 !== null ? s1End + recordedS2 : null;
+    if (s2End === null) {
+      const firstS3Sample = samples.find((s) => isNumber(s.sector) && s.sector >= 2);
+      if (firstS3Sample && isNumber(firstS3Sample.elapsedTimeMs)) {
+        s2End = firstS3Sample.elapsedTimeMs;
+      }
+    }
+
+    return {
+      s1TimeMs: s1End,
+      s2TimeMs: s1End !== null && s2End !== null ? Math.max(0, s2End - s1End) : recordedS2,
+      s1EndMs: s1End,
+      s2EndMs: s2End,
+    };
+  }, [activeLap]);
 
   const { scopeStartMs, scopeEndMs } = useMemo(() => {
     if (sectorScope === "s1") {
-      return { scopeStartMs: 0, scopeEndMs: Math.max(100, s1EndMs) };
+      return { scopeStartMs: 0, scopeEndMs: Math.max(100, s1EndMs ?? totalDurationMs) };
     }
-    if (sectorScope === "s2") {
-      return { scopeStartMs: s1EndMs, scopeEndMs: Math.max(s1EndMs + 100, s2EndMs) };
+    if (sectorScope === "s2" && s1EndMs !== null) {
+      return { scopeStartMs: s1EndMs, scopeEndMs: Math.max(s1EndMs + 100, s2EndMs ?? totalDurationMs) };
     }
-    if (sectorScope === "s3") {
+    if (sectorScope === "s3" && s2EndMs !== null) {
       return { scopeStartMs: s2EndMs, scopeEndMs: Math.max(s2EndMs + 100, totalDurationMs) };
     }
     return { scopeStartMs: 0, scopeEndMs: Math.max(100, totalDurationMs) };
@@ -409,10 +440,12 @@ export default function TelemetryReplayPanel({
 
   // Handle sector button click (snaps playhead to sector start)
   const handleSelectSector = (scope: SectorScope) => {
+    if (scope === "s2" && s1EndMs === null) return;
+    if (scope === "s3" && s2EndMs === null) return;
     setSectorScope(scope);
     if (scope === "s1") setCurrentTimeMs(0);
-    else if (scope === "s2") setCurrentTimeMs(s1EndMs);
-    else if (scope === "s3") setCurrentTimeMs(s2EndMs);
+    else if (scope === "s2" && s1EndMs !== null) setCurrentTimeMs(s1EndMs);
+    else if (scope === "s3" && s2EndMs !== null) setCurrentTimeMs(s2EndMs);
     else setCurrentTimeMs(0);
   };
 
@@ -482,12 +515,15 @@ export default function TelemetryReplayPanel({
   const activeSample = sampleMatch?.sample ?? null;
   const activeIndex = sampleMatch?.index ?? -1;
 
-  // Determine current active sector for UI
+  // Determine current active sector for UI from recorded sample sector or actual sector splits
   const currentSectorNumber = useMemo(() => {
-    if (currentTimeMs < s1EndMs) return 1;
-    if (currentTimeMs < s2EndMs) return 2;
+    if (isNumber(activeSample?.sector) && activeSample.sector >= 0 && activeSample.sector <= 2) {
+      return activeSample.sector + 1;
+    }
+    if (s1EndMs === null || currentTimeMs < s1EndMs) return 1;
+    if (s2EndMs === null || currentTimeMs < s2EndMs) return 2;
     return 3;
-  }, [currentTimeMs, s1EndMs, s2EndMs]);
+  }, [activeSample?.sector, currentTimeMs, s1EndMs, s2EndMs]);
 
   // Rolling plot points for MiniChart
   const rollingPlotPoints = useMemo<PlotPoint[]>(() => {
@@ -692,8 +728,9 @@ export default function TelemetryReplayPanel({
 
   // Sector timing segments display
   const sectorSegments = useMemo(() => {
-    const s1Complete = currentTimeMs >= s1EndMs;
-    const s2Complete = currentTimeMs >= s2EndMs;
+    const s1Complete = s1EndMs !== null && currentTimeMs >= s1EndMs;
+    const s2Complete = s2EndMs !== null && currentTimeMs >= s2EndMs;
+    const s3Complete = s2EndMs !== null && !activeLap?.inProgress && currentTimeMs >= totalDurationMs;
 
     return [
       {
@@ -705,17 +742,25 @@ export default function TelemetryReplayPanel({
       {
         sector: 2,
         state: s2Complete ? "complete" : currentSectorNumber === 2 ? "current" : "upcoming",
-        timeMs: s2Complete ? s2TimeMs : currentSectorNumber === 2 ? currentTimeMs - s1EndMs : null,
+        timeMs: s2Complete
+          ? s2TimeMs
+          : currentSectorNumber === 2 && s1EndMs !== null
+          ? Math.max(0, currentTimeMs - s1EndMs)
+          : null,
         grade: "yellow",
       },
       {
         sector: 3,
-        state: currentTimeMs >= totalDurationMs ? "complete" : currentSectorNumber === 3 ? "current" : "upcoming",
-        timeMs: currentTimeMs >= totalDurationMs ? totalDurationMs - s2EndMs : currentSectorNumber === 3 ? currentTimeMs - s2EndMs : null,
+        state: s3Complete ? "complete" : currentSectorNumber === 3 ? "current" : "upcoming",
+        timeMs: s3Complete && s2EndMs !== null
+          ? Math.max(0, totalDurationMs - s2EndMs)
+          : currentSectorNumber === 3 && s2EndMs !== null
+          ? Math.max(0, currentTimeMs - s2EndMs)
+          : null,
         grade: "purple",
       },
     ];
-  }, [currentTimeMs, s1EndMs, s2EndMs, s1TimeMs, s2TimeMs, totalDurationMs, currentSectorNumber]);
+  }, [currentTimeMs, s1EndMs, s2EndMs, s1TimeMs, s2TimeMs, totalDurationMs, currentSectorNumber, activeLap?.inProgress]);
 
   const activeDistance = activeSample?.distance ?? 0;
   const circuitName =
@@ -820,12 +865,14 @@ export default function TelemetryReplayPanel({
               <button
                 className={`sector-pill s2-pill ${sectorScope === "s2" ? "active" : ""}`}
                 onClick={() => handleSelectSector("s2")}
+                disabled={s1EndMs === null}
               >
                 SECTOR 2
               </button>
               <button
                 className={`sector-pill s3-pill ${sectorScope === "s3" ? "active" : ""}`}
                 onClick={() => handleSelectSector("s3")}
+                disabled={s2EndMs === null}
               >
                 SECTOR 3
               </button>
@@ -924,38 +971,50 @@ export default function TelemetryReplayPanel({
               <>
                 <div
                   className={`scrubber-sector-band s1-band ${sectorScope === "s1" ? "band-focused" : ""}`}
-                  style={{ width: `${Math.min(100, (s1EndMs / totalDurationMs) * 100)}%` }}
+                  style={{ width: `${s1EndMs === null ? 100 : Math.min(100, (s1EndMs / totalDurationMs) * 100)}%` }}
                 >
                   <span>S1</span>
                 </div>
-                <div
-                  className={`scrubber-sector-band s2-band ${sectorScope === "s2" ? "band-focused" : ""}`}
-                  style={{
-                    left: `${(s1EndMs / totalDurationMs) * 100}%`,
-                    width: `${Math.min(100 - (s1EndMs / totalDurationMs) * 100, ((s2EndMs - s1EndMs) / totalDurationMs) * 100)}%`,
-                  }}
-                >
-                  <span>S2</span>
-                </div>
-                <div
-                  className={`scrubber-sector-band s3-band ${sectorScope === "s3" ? "band-focused" : ""}`}
-                  style={{
-                    left: `${(s2EndMs / totalDurationMs) * 100}%`,
-                    width: `${Math.max(0, 100 - (s2EndMs / totalDurationMs) * 100)}%`,
-                  }}
-                >
-                  <span>S3</span>
-                </div>
+                {s1EndMs !== null && (
+                  <div
+                    className={`scrubber-sector-band s2-band ${sectorScope === "s2" ? "band-focused" : ""}`}
+                    style={{
+                      left: `${(s1EndMs / totalDurationMs) * 100}%`,
+                      width: `${
+                        s2EndMs === null
+                          ? Math.max(0, 100 - (s1EndMs / totalDurationMs) * 100)
+                          : Math.min(100 - (s1EndMs / totalDurationMs) * 100, ((s2EndMs - s1EndMs) / totalDurationMs) * 100)
+                      }%`,
+                    }}
+                  >
+                    <span>S2</span>
+                  </div>
+                )}
+                {s2EndMs !== null && (
+                  <div
+                    className={`scrubber-sector-band s3-band ${sectorScope === "s3" ? "band-focused" : ""}`}
+                    style={{
+                      left: `${(s2EndMs / totalDurationMs) * 100}%`,
+                      width: `${Math.max(0, 100 - (s2EndMs / totalDurationMs) * 100)}%`,
+                    }}
+                  >
+                    <span>S3</span>
+                  </div>
+                )}
 
                 {/* Delimiter Lines */}
-                <div
-                  className="scrubber-delimiter"
-                  style={{ left: `${(s1EndMs / totalDurationMs) * 100}%` }}
-                />
-                <div
-                  className="scrubber-delimiter"
-                  style={{ left: `${(s2EndMs / totalDurationMs) * 100}%` }}
-                />
+                {s1EndMs !== null && (
+                  <div
+                    className="scrubber-delimiter"
+                    style={{ left: `${(s1EndMs / totalDurationMs) * 100}%` }}
+                  />
+                )}
+                {s2EndMs !== null && (
+                  <div
+                    className="scrubber-delimiter"
+                    style={{ left: `${(s2EndMs / totalDurationMs) * 100}%` }}
+                  />
+                )}
 
                 {/* Scrubber Progress Fill & Playhead Cursor */}
                 <div

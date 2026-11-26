@@ -16,10 +16,12 @@ Concurrency model (plan §4.3):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 from krem.ingest.guard import guard, GuardResult, RejectReason
@@ -28,6 +30,9 @@ from krem.ingest.recorder import Recorder
 from krem.core import PACKET_SIZES, PacketId, CONSUMED_PACKET_IDS
 
 logger = logging.getLogger("krem.protocol")
+
+
+DEFAULT_STATS_PATH = Path(__file__).resolve().parents[2] / "data" / "ingest_stats.json"
 
 
 @dataclass
@@ -41,10 +46,61 @@ class PacketStats:
     last_frame_id: int = 0
     frame_gaps: int = 0
     bytes_received: int = 0
+    bytes_accepted: int = 0
+    cumulative_received: int = 0
+    cumulative_accepted: int = 0
+    cumulative_rejected: int = 0
+    cumulative_bytes_received: int = 0
+    cumulative_bytes_accepted: int = 0
+    persist_path: Path | None = None
     start_time: float = field(default_factory=time.monotonic)
     last_packet_time: float | None = None
     last_accepted_time: float | None = None
+    _last_flush_time: float = field(default_factory=time.monotonic, repr=False, compare=False)
+    _dirty: bool = field(default=False, repr=False, compare=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.persist_path is not None:
+            self._load_cumulative()
+
+    def _load_cumulative(self) -> None:
+        if self.persist_path is None or not self.persist_path.is_file():
+            return
+        try:
+            data = json.loads(self.persist_path.read_text(encoding="utf-8"))
+            self.cumulative_received = int(data.get("packetsReceived", 0))
+            self.cumulative_accepted = int(data.get("packetsAccepted", 0))
+            self.cumulative_rejected = int(data.get("packetsRejected", 0))
+            self.cumulative_bytes_received = int(data.get("bytesReceived", 0))
+            self.cumulative_bytes_accepted = int(data.get("bytesAccepted", 0))
+        except Exception:
+            logger.debug("Failed to load cumulative stats from %s", self.persist_path)
+
+    def flush(self, force: bool = True) -> None:
+        """Persist cumulative counters to disk if configured."""
+        if self.persist_path is None:
+            return
+        with self._lock:
+            now = time.monotonic()
+            if not self._dirty or (not force and now - self._last_flush_time < 5.0):
+                return
+            payload = {
+                "packetsReceived": self.cumulative_received,
+                "packetsAccepted": self.cumulative_accepted,
+                "packetsRejected": self.cumulative_rejected,
+                "bytesReceived": self.cumulative_bytes_received,
+                "bytesAccepted": self.cumulative_bytes_accepted,
+            }
+            self._dirty = False
+            self._last_flush_time = now
+        try:
+            self.persist_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.persist_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload), encoding="utf-8")
+            tmp.replace(self.persist_path)
+        except Exception:
+            logger.debug("Failed to persist cumulative stats to %s", self.persist_path)
 
     @property
     def packets_per_second(self) -> float:
@@ -62,17 +118,26 @@ class PacketStats:
         with self._lock:
             self.total_received += 1
             self.bytes_received += size
+            self.cumulative_received += 1
+            self.cumulative_bytes_received += size
             self.last_packet_time = time.monotonic()
+            self._dirty = True
 
     def record_rejected(self, reason: str) -> None:
         with self._lock:
             self.total_rejected += 1
+            self.cumulative_rejected += 1
             self.reject_reasons[reason] = self.reject_reasons.get(reason, 0) + 1
+            self._dirty = True
 
-    def record_accepted(self, packet_id: int | None = None) -> None:
+    def record_accepted(self, packet_id: int | None = None, size: int = 0) -> None:
         with self._lock:
             self.total_accepted += 1
+            self.bytes_accepted += size
+            self.cumulative_accepted += 1
+            self.cumulative_bytes_accepted += size
             self.last_accepted_time = time.monotonic()
+            self._dirty = True
             if packet_id is not None:
                 self.packets_per_type[packet_id] = (
                     self.packets_per_type.get(packet_id, 0) + 1
@@ -88,6 +153,7 @@ class PacketStats:
 
     def snapshot(self) -> dict[str, Any]:
         """Return a consistent, JSON-safe copy of packet and connection stats."""
+        self.flush(force=False)
         with self._lock:
             now = time.monotonic()
             age = (
@@ -113,6 +179,13 @@ class PacketStats:
                 },
                 "frameGaps": self.frame_gaps,
                 "packetsPerSecond": round(self.total_received / elapsed, 1),
+                "bytesReceived": self.bytes_received,
+                "bytesAccepted": self.bytes_accepted,
+                "cumulativePacketsReceived": self.cumulative_received,
+                "cumulativePacketsAccepted": self.cumulative_accepted,
+                "cumulativePacketsRejected": self.cumulative_rejected,
+                "cumulativeBytesReceived": self.cumulative_bytes_received,
+                "cumulativeBytesAccepted": self.cumulative_bytes_accepted,
                 "bytesPerSecond": round(self.bytes_received / elapsed, 0),
                 "lastPacketAgeSeconds": age,
                 "lastDatagramAgeSeconds": datagram_age,
@@ -141,11 +214,14 @@ class F1UDPProtocol(asyncio.DatagramProtocol):
         self,
         on_packet: PacketCallback | None = None,
         recorder: Recorder | None = None,
+        persist_stats: bool = False,
+        stats_path: Path | None = None,
     ) -> None:
         self._on_packet = on_packet
         self._recorder = recorder
         self._transport: asyncio.DatagramTransport | None = None
-        self.stats = PacketStats()
+        resolved_path = stats_path if stats_path is not None else (DEFAULT_STATS_PATH if persist_stats else None)
+        self.stats = PacketStats(persist_path=resolved_path)
         self._wrong_format_logged = False
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
@@ -175,7 +251,7 @@ class F1UDPProtocol(asyncio.DatagramProtocol):
                 self._wrong_format_logged = True
             return
 
-        self.stats.record_accepted(result.packet_id)
+        self.stats.record_accepted(result.packet_id, len(data))
 
         # 2. Record raw (non-blocking, background thread)
         if self._recorder is not None:
@@ -206,4 +282,5 @@ class F1UDPProtocol(asyncio.DatagramProtocol):
         logger.error("UDP error: %s", exc)
 
     def connection_lost(self, exc: Exception | None) -> None:
+        self.stats.flush(force=True)
         logger.info("UDP connection lost: %s", exc)

@@ -1,6 +1,7 @@
 import CarStatusPanel from "./components/CarStatusPanel";
 import LapComparePanel from "./components/LapComparePanel";
 import TelemetryReplayPanel from "./components/TelemetryReplayPanel";
+import TimingCarousel from "./components/TimingCarousel";
 import CoachCards, { type CoachAnalysisResponse } from "./components/CoachCards";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -13,6 +14,14 @@ interface Stats {
   packetsReceived?: MaybeNumber;
   packetsAccepted?: MaybeNumber;
   packetsRejected?: MaybeNumber;
+  bytesReceived?: MaybeNumber;
+  bytesAccepted?: MaybeNumber;
+  cumulativePacketsReceived?: MaybeNumber;
+  cumulativePacketsAccepted?: MaybeNumber;
+  cumulativePacketsRejected?: MaybeNumber;
+  cumulativeBytesReceived?: MaybeNumber;
+  cumulativeBytesAccepted?: MaybeNumber;
+  bytesPerSecond?: MaybeNumber;
   frameGaps?: MaybeNumber;
   lastPacketAgeSeconds?: MaybeNumber;
 }
@@ -91,6 +100,8 @@ interface Car {
   name?: string | null;
   driverNumber?: string | number | null;
   position?: MaybeNumber;
+  deltaToCarInFrontMs?: MaybeNumber;
+  deltaToRaceLeaderMs?: MaybeNumber;
   isPlayer?: boolean;
 }
 
@@ -208,6 +219,19 @@ function isNumber(value: unknown): value is number {
 
 function displayNumber(value: MaybeNumber, digits = 0, suffix = ""): string {
   return isNumber(value) ? `${value.toFixed(digits)}${suffix}` : "—";
+}
+
+function formatBytes(bytes: MaybeNumber): string {
+  if (!isNumber(bytes) || bytes < 0) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIdx = 0;
+  while (value >= 1024 && unitIdx < units.length - 1) {
+    value /= 1024;
+    unitIdx += 1;
+  }
+  const digits = unitIdx === 0 ? 0 : value >= 100 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[unitIdx]}`;
 }
 
 function formatTime(ms: MaybeNumber): string {
@@ -790,16 +814,13 @@ function App() {
         <div className="status-event"><span className="event-pulse" />{eventText || "READY FOR RACE CONTROL EVENTS"}</div>
       </div>
 
-      {!connected && activeTab === "live" && (
-        <div className="connection-banner" role="status">
-          <span className="banner-icon">!</span>
-          <div>
-            <strong>{paused ? "Game paused — readings and traces frozen" : snapshot?.telemetrySample ? "Live feed unavailable — showing last received readings" : "Waiting for F1 25 telemetry"}</strong>
-            <span>{paused ? "Inspect the existing traces at any point. Updates continue when the game resumes."
-              : snapshot?.telemetrySample ? "Retained values are not live. No new graph samples are added until telemetry resumes."
-              : "Configure F1 25 to send UDP telemetry using format 2025 to port 20777."}</span>
-          </div>
-        </div>
+      {activeTab === "live" && (
+        <TimingCarousel
+          cars={cars}
+          connected={connected}
+          paused={paused}
+          hasSample={Boolean(snapshot?.telemetrySample)}
+        />
       )}
 
       {activeTab === "live" ? (
@@ -897,7 +918,7 @@ function App() {
 
       <footer className="footer">
         <span>KREM <i>·</i> LIVE TELEMETRY</span>
-        <span>PACKETS {displayNumber(stats?.packetsReceived)} <i>·</i> ACCEPTED {displayNumber(stats?.packetsAccepted)} <i>·</i> REJECTED {displayNumber(stats?.packetsRejected)}</span>
+        <span>PACKETS {displayNumber(stats?.cumulativePacketsReceived ?? stats?.packetsReceived)} <i>·</i> ACCEPTED {displayNumber(stats?.cumulativePacketsAccepted ?? stats?.packetsAccepted)} ({formatBytes(stats?.cumulativeBytesAccepted ?? stats?.bytesAccepted ?? stats?.bytesReceived)}) <i>·</i> REJECTED {displayNumber(stats?.cumulativePacketsRejected ?? stats?.packetsRejected)}</span>
         <span>{lastMessageAt ? `UPDATED ${new Date(lastMessageAt).toLocaleTimeString()}` : "WAITING FOR DATA"}</span>
       </footer>
       {coachOpen && <div className="coach-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setCoachOpen(false); }} role="presentation">

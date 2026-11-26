@@ -273,6 +273,7 @@ def test_lap_samples_record_car_position_per_frame():
 def test_lap_samples_record_all_player_values():
     r = recorder()
     p1, t1 = pair(1, lap=1, elapsed=0, distance=0)
+    p1.data['cars'][0]['sector'] = 1
     t1.data['cars'][0]['gear'] = 6
     t1.data['cars'][0]['engineRPM'] = 11400
     t1.data['cars'][0]['drs'] = 1
@@ -294,6 +295,7 @@ def test_lap_samples_record_all_player_values():
     r.flush(force=True)
 
     sample = r.records[0]['samples'][0]
+    assert sample['sector'] == 1
     assert sample['gear'] == 6
     assert sample['rpm'] == 11400
     assert sample['drs'] == 1

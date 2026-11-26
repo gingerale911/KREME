@@ -124,6 +124,7 @@ export interface LapSample {
   fuel?: MaybeNumber;
   fuelLaps?: MaybeNumber;
   sessionTime?: MaybeNumber;
+  sector?: MaybeNumber;
   position?: MaybeNumber;
   tyres?: Player["tyres"] | null;
   damage?: Player["damage"] | null;

@@ -198,6 +198,7 @@ async def run_live(
         protocol = F1UDPProtocol(
             on_packet=live_state.update,
             recorder=recorder,
+            persist_stats=True,
         )
 
         transport, _ = await loop.create_datagram_endpoint(
@@ -253,6 +254,7 @@ async def run_live(
     finally:
         if transport is not None:
             transport.close()
+        protocol.stats.flush(force=True)
 
         if recorder:
             recorder.stop()
@@ -300,7 +302,7 @@ async def run_replay(
         raise ValueError("Replay speed cannot be negative")
 
     live_state = LiveState()
-    protocol = F1UDPProtocol()
+    protocol = F1UDPProtocol(persist_stats=True)
 
     database_path = (
         Path(__file__).resolve().parent.parent

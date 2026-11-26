@@ -241,15 +241,15 @@ export default function LapComparePanel() {
     <header className="comparison-header"><div><span className="eyebrow">LAP ANALYSIS</span><h2>Compare two laps</h2><p>Choose a reference, then see where your comparison lap gains or loses time.</p></div><button onClick={() => setRefresh(v => v + 1)} disabled={loading}>Refresh laps</button></header>
     <div className="compare-controls">
       <label>Session<select value={sessionId} disabled={loading} onChange={e => setSessionId(e.target.value)}><option value="" disabled>Select session</option>{sessions.map(s => <option key={s.sessionId} value={s.sessionId}>{trackNames[s.trackId ?? -1] ?? `Track ${s.trackId ?? "—"}`} · {s.startedAt ? new Date(s.startedAt).toLocaleString() : s.sessionId.slice(-8)} · {s.lapCount} laps</option>)}</select></label>
-      {[true, false].map(isReference => <label key={String(isReference)}>{isReference ? "Reference lap" : "Comparison lap"}<select value={isReference ? referenceId : comparisonId} disabled={loading || !laps.length} onChange={e => selectLap(e.target.value, isReference)}><option value="" disabled>Select lap</option>{laps.map(l => <option key={l.lapId} value={l.lapId}>Lap {l.lapNumber} · {formatLapTime(l.lapTimeMs)}{l.invalid ? " · invalid" : l.partial ? " · partial" : ""}</option>)}</select></label>)}
+      {[true, false].map(isReference => <label key={String(isReference)}>{isReference ? "Reference lap" : "Comparison lap"}<select value={isReference ? referenceId : comparisonId} disabled={loading || !laps.length} onChange={e => selectLap(e.target.value, isReference)}><option value="" disabled>Select lap</option>{laps.map(l => <option key={l.lapId} value={l.lapId}>Lap {l.lapNumber} · {formatLapTime(l.lapTimeMs)}</option>)}</select></label>)}
       <button className="persistent-compare-button" onClick={compare} disabled={loading || comparing || !referenceId || !comparisonId || referenceId === comparisonId}>{comparing ? "Comparing…" : "Compare laps"}</button>
     </div>
     {error && <p className="persistent-error" role="alert">{error}</p>}
     {loading && <p role="status" className="persistent-message">Loading laps…</p>}
     {reference && comparison && <div className="compare-summary">
-      <div><span>REFERENCE · LAP {reference.lapNumber}</span><strong>{formatLapTime(reference.lapTimeMs)}</strong><small>{reference.invalid ? "Invalid lap" : reference.partial ? "Partial recording" : "Valid lap"}</small></div>
-      <div><span>COMPARISON · LAP {comparison.lapNumber}</span><strong>{formatLapTime(comparison.lapTimeMs)}</strong><small>{comparison.invalid ? "Invalid lap" : comparison.partial ? "Partial recording" : "Valid lap"}</small></div>
-      <div><span>TIME DIFFERENCE</span><strong className={result && result.totalTimeDeltaMs < 0 ? "text-green" : "text-amber"}>{result ? `${result.totalTimeDeltaMs > 0 ? "+" : ""}${(result.totalTimeDeltaMs / 1000).toFixed(3)}s` : "—"}</strong><small>Negative = comparison faster</small></div>
+      <div><span>REFERENCE · LAP {reference.lapNumber}</span><strong>{formatLapTime(reference.lapTimeMs)}</strong></div>
+      <div><span>COMPARISON · LAP {comparison.lapNumber}</span><strong>{formatLapTime(comparison.lapTimeMs)}</strong></div>
+      <div><span>TIME DIFFERENCE</span><strong className={result && result.totalTimeDeltaMs < 0 ? "text-green" : "text-amber"}>{result ? `${result.totalTimeDeltaMs > 0 ? "+" : ""}${(result.totalTimeDeltaMs / 1000).toFixed(3)}s` : "—"}</strong><small>{!result ? "Select two laps to compare" : result.totalTimeDeltaMs < 0 ? "Comparison lap is faster" : result.totalTimeDeltaMs > 0 ? "Comparison lap is slower" : "Identical lap time"}</small></div>
       {[1,2,3].map(n => {
         const key = `sector${n}TimeMs` as "sector1TimeMs" | "sector2TimeMs" | "sector3TimeMs";
         const a = reference[key], b = comparison[key];

@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS lap_samples (
     overall_frame_id BIGINT,
     session_time DOUBLE,
     gap_before BOOLEAN NOT NULL DEFAULT FALSE,
+    sector INTEGER,
     position INTEGER,
     gear INTEGER,
     rpm INTEGER,
@@ -108,6 +109,7 @@ class LapDatabase:
             for col in (
                 "tyres_json VARCHAR",
                 "damage_json VARCHAR",
+                "sector INTEGER",
                 "position INTEGER",
                 "gear INTEGER",
                 "rpm INTEGER",

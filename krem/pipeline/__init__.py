@@ -488,7 +488,14 @@ class LiveState:
                     view["cars"] = []
                 elif unavailable("lap"):
                     for car in view["cars"]:
-                        for key in ("position", "lap", "sector", "lapDistance"):
+                        for key in (
+                            "position",
+                            "lap",
+                            "sector",
+                            "lapDistance",
+                            "deltaToCarInFrontMs",
+                            "deltaToRaceLeaderMs",
+                        ):
                             car[key] = None
             retained = {key: copy.deepcopy(result[key]) for key in ("player", "session", "cars")}
             mask(retained, missing_only=True)
@@ -638,6 +645,18 @@ class LiveState:
                 "sector": int(lap_car["sector"]) if lap_car is not None else None,
                 "lapDistance": (
                     _json_number(lap_car["lapDistance"], 1)
+                    if lap_car is not None
+                    else None
+                ),
+                "deltaToCarInFrontMs": (
+                    int(lap_car["deltaToCarInFrontMinutesPart"]) * 60_000
+                    + int(lap_car["deltaToCarInFrontMSPart"])
+                    if lap_car is not None
+                    else None
+                ),
+                "deltaToRaceLeaderMs": (
+                    int(lap_car["deltaToRaceLeaderMinutesPart"]) * 60_000
+                    + int(lap_car["deltaToRaceLeaderMSPart"])
                     if lap_car is not None
                     else None
                 ),

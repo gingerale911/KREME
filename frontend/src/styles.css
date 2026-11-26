@@ -200,6 +200,106 @@ button { font: inherit; }
 .connection-banner strong { font-size: 11px; }
 .connection-banner span:not(.banner-icon) { color: #9e8d6a; font-size: 10px; }
 
+.timing-carousel-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .025);
+  overflow: hidden;
+}
+.timing-carousel-bar.is-stale {
+  border-color: rgba(242, 185, 75, .28);
+  background: rgba(242, 185, 75, .04);
+}
+.timing-carousel-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.tc-status-badge {
+  padding: 2px 7px;
+  border: 1px solid rgba(242, 185, 75, .4);
+  border-radius: 3px;
+  color: #f2b94b;
+  background: rgba(242, 185, 75, .1);
+  font: 600 10px "DM Mono", monospace;
+  letter-spacing: 0.05em;
+}
+.tc-mode-btn {
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, .04);
+  color: #9ca3af;
+  font: 600 10px "DM Mono", monospace;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.tc-mode-btn:hover {
+  color: #f3f4f6;
+  border-color: #a855f7;
+}
+.timing-carousel-viewport {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, transparent, #000 2%, #000 98%, transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 2%, #000 98%, transparent);
+}
+.timing-carousel-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  animation: timing-marquee 36s linear infinite;
+}
+.timing-carousel-bar:hover .timing-carousel-track {
+  animation-play-state: paused;
+}
+@keyframes timing-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.timing-carousel-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .025);
+  font: 500 11px "DM Mono", monospace;
+  white-space: nowrap;
+}
+.timing-carousel-item.is-player {
+  border-color: rgba(236, 72, 153, .55);
+  background: rgba(236, 72, 153, .12);
+}
+.timing-carousel-item.is-leader .tc-delta {
+  color: #a855f7;
+}
+.tc-pos {
+  color: #9ca3af;
+  font-weight: 600;
+}
+.timing-carousel-item.is-player .tc-pos {
+  color: #f472b6;
+}
+.tc-name {
+  color: #e5e7eb;
+  font-weight: 600;
+}
+.tc-delta {
+  color: #22c55e;
+  font-variant-numeric: tabular-nums;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.04fr) minmax(0, .96fr);

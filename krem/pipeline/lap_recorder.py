@@ -185,6 +185,14 @@ class LapRecorder:
         except Exception:
             pass
 
+        car_sector = None
+        try:
+            sec_val = int(car["sector"])
+            if 0 <= sec_val <= 2:
+                car_sector = sec_val
+        except Exception:
+            pass
+
         if session_time is None or distance is None:
             if self.current:
                 self.current["reasons"].add("non_finite_position")
@@ -451,6 +459,7 @@ class LapRecorder:
             "sessionUid": str(h.session_uid),
             "playerCarIndex": int(h.player_car_index),
             "lap": lap_num,
+            "sector": car_sector,
             "position": car_position,
             "gapBefore": gap,
             "tyres": tyres_dict,

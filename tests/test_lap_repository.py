@@ -214,6 +214,7 @@ def test_lap_trace_persists_position(sample_lap):
 
 def test_lap_trace_persists_all_player_values(sample_lap):
     sample_lap["samples"][0].update({
+        "sector": 1,
         "gear": 5,
         "rpm": 10800,
         "drs": 1,
@@ -233,6 +234,7 @@ def test_lap_trace_persists_all_player_values(sample_lap):
 
         trace = repo.get_lap_trace(lap_id)
         s = trace[0]
+        assert s["sector"] == 1
         assert s["gear"] == 5
         assert s["rpm"] == 10800
         assert s["drs"] == 1

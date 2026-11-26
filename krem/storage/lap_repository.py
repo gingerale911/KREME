@@ -215,6 +215,7 @@ class LapRepository:
                             _integer(sample.get("overallFrameId")),
                             _finite_number(sample.get("sessionTime")),
                             bool(sample.get("gapBefore", False)),
+                            _integer(sample.get("sector")),
                             _integer(sample.get("position")),
                             _integer(sample.get("gear")),
                             _integer(sample.get("rpm", sample.get("engineRPM"))),
@@ -246,6 +247,7 @@ class LapRepository:
                             overall_frame_id,
                             session_time,
                             gap_before,
+                            sector,
                             position,
                             gear,
                             rpm,
@@ -261,7 +263,7 @@ class LapRepository:
                             tyres_json,
                             damage_json
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         sample_rows,
                     )
@@ -463,6 +465,7 @@ class LapRepository:
                 overall_frame_id,
                 session_time,
                 gap_before,
+                sector,
                 position,
                 gear,
                 rpm,
@@ -496,6 +499,7 @@ class LapRepository:
             "overallFrameId",
             "sessionTime",
             "gapBefore",
+            "sector",
             "position",
             "gear",
             "rpm",
