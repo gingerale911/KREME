@@ -716,7 +716,7 @@ button { font: inherit; }
   .panel-values { min-height: 360px; }
   .map-wrap { height: 280px; }
   .footer { flex-wrap: wrap; line-height: 1.7; }
-  .footer span:last-child { display: none; }
+  .footer > span:last-child { display: none; }
 }
 
 @media (max-width: 420px) {

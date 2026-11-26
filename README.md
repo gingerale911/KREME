@@ -183,3 +183,20 @@ Validation: 156 backend tests passed; production frontend build passed. A
 simulated DOM/WebSocket check covered pause retention, frozen plots, duplicate
 suppression, resume gaps, disconnect retention and session clearing. Actual
 F1 25 pause/resume behaviour still needs checking on the game owner's PC.
+
+
+### Received data counter
+
+The dashboard footer shows **DATA RECEIVED** beside the received, accepted and
+rejected packet counts. This is the cumulative UDP payload received by the live
+listener since backend startup, including rejected datagrams. IP/UDP/link headers
+and outgoing WebSocket traffic are excluded. Units automatically use decimal
+KB, MB and GB (1 KB = 1,000 bytes; 1 MB = 1,000,000 bytes; 1 GB = 1,000,000,000
+bytes), displayed to one decimal place. The total remains across game sessions
+and browser refreshes; restarting the backend resets it. If the game sends
+packets while paused, those bytes still count. Local replay does not add incoming
+network bytes. The API exposes the exact integer as `stats.bytesReceived` in
+dashboard snapshots and `bytesReceived` in `/api/status`.
+
+After installing this update, rebuild the frontend with `npm.cmd run build` from
+`frontend`, then restart the backend and refresh the browser.
