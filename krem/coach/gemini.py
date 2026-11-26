@@ -93,19 +93,29 @@ def build_coach_prompt(
 
     target_corners = _sort_corners(target_corners)
 
-    observations = [c.to_dict() for c in target_corners]
+    observations = [
+        {
+            "turn": c.turn,
+            "name": c.name,
+            "end_m": round(c.end_m, 1),
+            "ideal_exit_speed_kph": round(c.ideal_apex_speed_kph, 1),
+            "player_exit_speed_kph": round(c.player_exit_speed_kph, 1) if c.player_exit_speed_kph is not None else None,
+            "exit_speed_delta_kph": round(c.exit_speed_delta_kph, 1),
+            "speed_buffer_kph": c.speed_buffer_kph,
+            "status": c.status,
+            "pace_status": c.pace_status,
+        }
+        for c in target_corners
+    ]
     return f"""You are a concise race engineer. Coach only {sector_str} on {track.track_name}.
 Evaluated lap: {last_lap_num}; lap time: {player_lap_time_ms} ms.
-These are measured brake-on, brake-release and throttle-pickup timestamps from that previous lap,
-with absolute lap distances and differences against configured coaching targets.
-Targets are heuristic guidance, not a measured ideal lap. Do not claim an exact time gain or loss.
-Brake threshold: 15%; throttle pickup threshold: 85%. Timestamps are milliseconds from lap start.
-Positive brake_delta_m means early braking; positive throttle_delta_m means late throttle.
+Analyse ONLY corner exit speed against the configured target speed, using a 50 km/h buffer:
+- If exit_speed_delta_kph < -50 (more than 50 km/h slower than target), status is below_target (slow).
+- If exit_speed_delta_kph >= -50 (within the 50 km/h buffer or faster), status is on_pace.
 OBSERVATIONS: {json.dumps(observations)}
-Return exactly one plain-text line per supplied turn: Turn <id>: <status>. <one actionable correction>.
+Return exactly one plain-text line per supplied turn: Turn <id>: <status>. <one concise exit-speed note>.
 Use the supplied status, including insufficient_data. Never call missing data on pace.
-Mention the measured input timing and a practical braking/throttle adjustment where available.
-No generic summary, invented corners, braking boards, or unmeasured timings. No markdown.
+Do not mention braking points, brake boards, throttle pickup distances, or invented timings. No markdown.
 """
 
 

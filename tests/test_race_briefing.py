@@ -20,44 +20,62 @@ def benchmark():
     ])
 
 
-def samples(brake_at=100, throttle_at=175):
-    return [dict(distance=d, elapsedTimeMs=d * 10, speed=100, brake=float(brake_at <= d < 150),
-                 throttle=float(d < 90 or d >= throttle_at), gapBefore=False)
-            for d in range(0, 281, 5)]
+def samples(speed=100, exit_speed=None):
+    rows = []
+    for d in range(0, 281, 5):
+        s = exit_speed if (exit_speed is not None and d >= 180) else speed
+        rows.append(dict(distance=d, elapsedTimeMs=d * 10, speed=s, gapBefore=False))
+    return rows
 
 
-def test_corner_input_timestamps_and_missing_corner_are_explicit():
+def test_corner_exit_speed_and_missing_corner_are_explicit():
     rows = compare_lap_to_benchmark(samples(), benchmark(), target_sector=2)
     assert [row.turn for row in rows] == ['1', '2']
     first = rows[0]
-    assert (first.brake_on_ms, first.brake_release_ms, first.throttle_on_ms) == (1000, 1500, 1750)
+    assert first.player_exit_speed_kph == 100
+    assert first.exit_speed_delta_kph == 0
+    assert first.speed_buffer_kph == 50.0
     assert first.status == 'on_pace'
+    assert first.pace_status == 'on_pace'
     assert rows[1].status == 'insufficient_data'
-    assert rows[1].player_brake_on_m is None
+    assert rows[1].player_exit_speed_kph is None
 
 
-def test_late_inputs_are_graded_from_inputs_not_estimated_time_loss():
-    row = compare_lap_to_benchmark(samples(125, 200), benchmark(), 2)[0]
-    assert row.brake_delta_m == -25
-    assert row.throttle_delta_m == 25
-    assert row.status == row.brake_status == row.throttle_status == 'late'
+def test_exit_speed_uses_50kph_buffer():
+    # Target is 100 km/h; 55 km/h exit is 45 km/h slower (within 50 km/h buffer -> on_pace)
+    within = compare_lap_to_benchmark(samples(speed=55), benchmark(), 2)[0]
+    assert within.exit_speed_delta_kph == -45
+    assert within.status == 'on_pace'
+    assert within.pace_status == 'on_pace'
+
+    # Exact 50 km/h boundary (50 km/h vs 100 km/h target) is still within the 50 km/h buffer
+    boundary = compare_lap_to_benchmark(samples(speed=50), benchmark(), 2)[0]
+    assert boundary.exit_speed_delta_kph == -50
+    assert boundary.status == 'on_pace'
+
+    # More than 50 km/h slower (49 km/h vs 100 km/h target) flags slow / below_target
+    too_slow = compare_lap_to_benchmark(samples(speed=49), benchmark(), 2)[0]
+    assert too_slow.exit_speed_delta_kph == -51
+    assert too_slow.pace_status == 'slow'
+    assert too_slow.status == 'below_target'
 
 
 def test_missing_and_gapped_samples_cannot_be_on_pace():
     trace = samples()
-    trace[25]['brake'] = None
+    trace[25]['speed'] = None
     assert compare_lap_to_benchmark(trace, benchmark(), 2)[0].status == 'insufficient_data'
     trace = samples()
     trace[25]['gapBefore'] = True
     assert compare_lap_to_benchmark(trace, benchmark(), 2)[0].status == 'insufficient_data'
 
 
-def test_prompt_contains_previous_lap_timing_and_only_upcoming_turns():
-    rows = compare_lap_to_benchmark(samples(), benchmark())
+def test_prompt_contains_exit_speed_and_only_upcoming_turns():
+    rows = compare_lap_to_benchmark(samples(speed=45), benchmark())
     prompt = build_coach_prompt(benchmark(), 60000, rows, 2, 4)
-    assert 'Evaluated lap: 4' in prompt and '"brake_on_ms": 1000' in prompt
+    assert 'Evaluated lap: 4' in prompt and '"player_exit_speed_kph": 45.0' in prompt
+    assert '50 km/h buffer' in prompt
     assert '"turn": "3"' not in prompt
-    advice = clean_gemini_corner_advice('Turn 1: Hold the timing.\nTurn 99: Invented turn.', rows[:2])
+    advice = clean_gemini_corner_advice('Turn 1: Carry more exit speed.\nTurn 99: Invented turn.', rows[:2])
     assert 'Turn 99' not in advice and 'Turn 2:' in advice
 
 
@@ -84,20 +102,22 @@ def test_first_lap_has_no_fabricated_sector_grade():
     assert result[1]['timeMs'] == 1000
 
 
-def test_pace_is_independent_of_pedal_transitions():
-    trace = samples()
-    for s in trace:
-        s['speed'] = 120
-        s['throttle'] = .5
+def test_exit_speed_uses_corner_exit_not_apex_or_pedals():
+    # Slower apex speed (30 km/h) should not trigger slow if exit speed at end_m is within 50 km/h buffer
+    trace = samples(speed=30, exit_speed=85)
     row = compare_lap_to_benchmark(trace, benchmark(), 2)[0]
-    assert row.pace_status == 'fast'
-    assert row.throttle_on_ms is None
-    for s in trace:
-        s['speed'] = 80
-    assert compare_lap_to_benchmark(trace, benchmark(), 2)[0].pace_status == 'slow'
-    for s in trace:
-        s['speed'] = 103
-    assert compare_lap_to_benchmark(trace, benchmark(), 2)[0].pace_status == 'on_pace'
+    assert row.player_exit_speed_kph == 85
+    assert row.exit_speed_delta_kph == -15
+    assert row.pace_status == 'on_pace'
+    assert row.status == 'on_pace'
+
+    # Drop exit speed below target - 50 km/h (40 km/h vs 100 km/h target) -> slow / below_target
+    slow_trace = samples(speed=100, exit_speed=40)
+    slow_row = compare_lap_to_benchmark(slow_trace, benchmark(), 2)[0]
+    assert slow_row.player_exit_speed_kph == 40
+    assert slow_row.pace_status == 'slow'
+    assert slow_row.status == 'below_target'
+
     trace[25]['gapBefore'] = True
     assert compare_lap_to_benchmark(trace, benchmark(), 2)[0].pace_status == 'insufficient_data'
 
@@ -108,18 +128,6 @@ def test_repeated_game_clock_does_not_invalidate_measured_corner():
     row = compare_lap_to_benchmark(trace, benchmark(), 2)[0]
     assert row.pace_status == 'on_pace'
     assert row.status != 'insufficient_data'
-
-
-def test_constant_inputs_are_observations_not_missing_telemetry():
-    trace = samples()
-    for s in trace:
-        s['throttle'] = .5
-        s['brake'] = 0
-    row = compare_lap_to_benchmark(trace, benchmark(), 2)[0]
-    assert row.status != 'insufficient_data'
-    assert row.brake_status == 'no_braking'
-    assert row.throttle_status == 'held_below_85_percent'
-    assert 'build power' in row.diagnosis
 
 
 def test_damage_packet_reaches_all_hud_components():
@@ -165,7 +173,10 @@ def test_coach_api_uses_exact_previous_lap_and_upcoming_sector():
             data = client.post('/api/coach/analyse', json={'trackId': 10, 'lapNum': 2}).json()
             assert data['lapNum'] == 2 and data['nextSector'] == 2
             assert [c['turn'] for c in data['corners']] == ['1', '2']
-            assert generate.call_args.kwargs['corner_deltas'][0].brake_on_ms == 1000
+            assert data['corners'][0]['start_m'] == 100 and data['corners'][0]['end_m'] == 200
+            assert data['corners'][0]['player_exit_speed_kph'] == 100.0
+            assert data['corners'][0]['speed_buffer_kph'] == 50.0
+            assert generate.call_args.kwargs['corner_deltas'][0].player_exit_speed_kph == 100.0
             assert client.post('/api/coach/analyse', json={'lapNum': 1}).status_code == 409
             state.player.current_lap_num = 4
             assert client.post('/api/coach/analyse', json={}).status_code == 409

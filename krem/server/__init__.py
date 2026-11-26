@@ -89,10 +89,14 @@ def create_app(
         )
 
         return _status_page(live_state, protocol)
+    @app.get("/track_data/{track_file}")
     async def track_data(track_file: str):
         """Serve prerendered track geometry files."""
 
-        file_path = frontend_dist / "track_data" / track_file
+        safe_name = Path(track_file).name
+        file_path = frontend_dist / "track_data" / safe_name
+        if not file_path.is_file():
+            file_path = Path(__file__).resolve().parents[2] / "frontend" / "public" / "track_data" / safe_name
 
         if not file_path.is_file():
             raise HTTPException(

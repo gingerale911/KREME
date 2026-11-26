@@ -1875,27 +1875,42 @@ button { font: inherit; }
 .cs-gauge-fr, .cs-gauge-rr { right: 5%; }
 .race-view .coach-button { opacity: 1; background: #5b2790; border-color: #ba68ff; box-shadow: 0 0 16px #a855f788, inset 0 0 9px #d29cff44; color: #fff; }
 .coach-modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: #05070bd9; backdrop-filter: blur(7px); }
-.coach-modal { width: min(1120px, 100%); max-height: min(90dvh, 900px); overflow: hidden; display: flex; flex-direction: column; border: 1px solid #784aa7; border-radius: 13px; background: #141a24; box-shadow: 0 24px 100px #000c; }
+.coach-modal { width: min(1160px, 100%); max-height: min(90dvh, 900px); overflow: hidden; display: flex; flex-direction: column; border: 1px solid #784aa7; border-radius: 13px; background: #141a24; box-shadow: 0 24px 100px #000c; }
 .coach-modal-header { display: flex; justify-content: space-between; align-items: start; padding: 23px 30px; border-bottom: 1px solid var(--line); }
 .coach-modal-header span { color: #c067ff; font-weight: 800; letter-spacing: .13em; }
 .coach-modal-header h2 { margin: 8px 0; font: 700 30px "Barlow Condensed", sans-serif; }
 .coach-modal-header p { margin: 0; color: #38d995; font: 600 12px "DM Mono", monospace; }
 .coach-modal-header button { border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--text); font-size: 28px; cursor: pointer; }
 .coach-modal-body { overflow: auto; padding: 20px 30px 32px; }
-.coach-modal .corner-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.coach-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 20px; align-items: start; margin-top: 10px; }
+.coach-modal .corner-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .coach-modal .corner-card { min-height: 145px; perspective: 900px; }
 .coach-modal .corner-card:hover, .coach-modal .corner-card:focus-within, .coach-modal .corner-card[data-open="true"] { z-index: 30; }
+.coach-modal .corner-card[data-active="true"] > button { border-color: #c067ff; box-shadow: 0 0 0 1px rgba(192, 103, 255, 0.4), 0 12px 28px #0008; }
 .race-view .cs-stage .cs-car { width: 40%; left: 30%; height: 96%; top: 2%; }
 .race-view .cs-tyre-gauge { width: min(17%, 70px); }
 .race-view .cs-gauge-fl, .race-view .cs-gauge-rl { left: 7%; }
 .race-view .cs-gauge-fr, .race-view .cs-gauge-rr { right: 7%; }
-.coach-modal .corner-card > button { height: 145px; padding: 18px; transition: transform .25s, box-shadow .25s; transform-style: preserve-3d; }
-.coach-modal .corner-card > button strong { font-size: 19px; white-space: normal; }
-.coach-modal .corner-card > button b { display: block; margin-top: 8px; font-size: 11px; }
-.coach-modal .corner-preview { margin-top: 14px; white-space: normal; font-size: 12px; line-height: 1.4; }
-.coach-modal .corner-detail { bottom: auto; top: 0; left: 0; right: auto; width: 100%; min-height: 190px; z-index: 5; font-size: 13px; transform: scale(1.06) rotateY(0deg); box-shadow: 0 20px 50px #000d; }
-.coach-modal .corner-card:hover > button, .coach-modal .corner-card:focus-within > button { transform: rotateY(8deg) scale(1.04); box-shadow: 0 15px 35px #0009; }
+.coach-modal .corner-card > button { height: 145px; padding: 16px; transition: transform .25s, box-shadow .25s, border-color .2s; transform-style: preserve-3d; }
+.coach-modal .corner-card > button strong { font-size: 18px; white-space: normal; }
+.coach-modal .corner-card > button b { display: block; margin-top: 7px; font-size: 11px; }
+.coach-modal .corner-preview { margin-top: 10px; white-space: normal; font-size: 12px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.coach-modal .corner-detail { bottom: auto; top: 0; left: 0; right: auto; width: 100%; min-height: 190px; z-index: 5; font-size: 13px; transform: scale(1.04) rotateY(0deg); box-shadow: 0 20px 50px #000d; }
+.coach-modal .corner-card:hover > button, .coach-modal .corner-card:focus-within > button { transform: rotateY(4deg) scale(1.02); box-shadow: 0 15px 35px #0009; }
 .coach-modal .corner-card:nth-child(3n) .corner-detail { left: 0; right: auto; }
+.coach-minimap-panel { position: sticky; top: 0; background: #0f141c; border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.coach-minimap-header { display: flex; justify-content: space-between; align-items: center; font: 700 10px "DM Mono", monospace; letter-spacing: .08em; color: var(--muted); }
+.coach-minimap-header b { color: #c067ff; font-size: 11px; }
+.coach-minimap-wrap { display: flex; flex-direction: column; gap: 10px; }
+.coach-minimap-svg { width: 100%; height: auto; display: block; border-radius: 7px; background: #090d13; border: 1px solid rgba(255, 255, 255, 0.06); }
+.coach-minimap-svg .circuit-halo { stroke-width: 8; }
+.coach-minimap-sf { stroke: #ffffff; stroke-width: 2.5; stroke-opacity: 0.7; }
+.coach-minimap-pulse { transform-box: fill-box; transform-origin: center; animation: coach-pulse 1.5s ease-in-out infinite; }
+@keyframes coach-pulse { 0%, 100% { opacity: 0.95; transform: scale(0.95); } 50% { opacity: 0.35; transform: scale(1.25); } }
+.coach-minimap-caption { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); min-height: 32px; }
+.coach-minimap-caption strong { color: var(--text); font-size: 12px; }
+.coach-minimap-empty { padding: 36px 12px; text-align: center; color: var(--muted); font-size: 11px; border: 1px dashed var(--line); border-radius: 7px; }
+@media (max-width: 900px) { .coach-layout { grid-template-columns: 1fr; } .coach-minimap-panel { position: static; order: -1; } }
 @media (max-width: 700px) { .coach-modal .corner-cards { grid-template-columns: 1fr; } .coach-modal-header { padding: 16px; } .coach-modal-body { padding: 16px; } }
 .race-view .panel-values .cs-panel { flex: 1; }
 .race-view .gear-readout { font-size: 25px; }
